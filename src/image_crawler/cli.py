@@ -79,7 +79,7 @@ def _categories(words: list[str]) -> list:
 @app.command()
 def crawl(
     keywords: KeywordsArg,
-    source: Annotated[list[Source], typer.Option("--source", "-s", help="Source(s) to search; 'web' is a whole-web image search (Bing, SafeSearch off)")] = [Source.web, Source.openverse, Source.wikimedia],
+    source: Annotated[list[Source], typer.Option("--source", "-s", help="Source(s) to search; 'web' is a whole-web image search (Bing)")] = [Source.web, Source.openverse, Source.wikimedia],
     url: Annotated[list[str], typer.Option("--url", "-u", help="Crawl these websites instead of the APIs (repeatable)")] = [],
     limit: Annotated[int, typer.Option("--limit", "-n", help="Stop after saving this many images per keyword per source (or in total for --url). 0 = no limit, run until Ctrl+C or the sources run out")] = 0,
     out: OutOpt = Path("output"),
