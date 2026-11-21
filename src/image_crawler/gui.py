@@ -155,7 +155,7 @@ def read_images(out: Path, offset: int) -> tuple[list[dict], int]:
     return recs, offset + end
 
 
-@lru_cache(maxsize=3000)
+@lru_cache(maxsize=300)  # ~10 MB; the browser caches thumbnails itself (max-age)
 def thumbnail(path: str, mtime: float, size: int = 360) -> bytes:
     """A small JPEG for the gallery grid (``mtime`` is only part of the cache key).
 
@@ -167,6 +167,7 @@ def thumbnail(path: str, mtime: float, size: int = 360) -> bytes:
     from .pipeline import representative_frame
 
     with Image.open(path) as im:
+        im.draft(im.mode, (size, size))  # JPEG: decode at reduced scale, not full size
         frame = representative_frame(im)  # middle frame of a GIF, as RGB
         frame.thumbnail((size, size))
         buf = io.BytesIO()

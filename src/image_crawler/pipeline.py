@@ -112,7 +112,38 @@ def representative_frame(img: Image.Image) -> Image.Image:
     return to_rgb(img)
 
 
-def download(client: httpx.Client, url: str, max_bytes: int) -> tuple[bytes, Image.Image, str] | None:
+# Classification never needs more pixels than this on the shorter side: CLIP looks
+# at 224 px, the tone check at 512 px, the perceptual hash at 32 px.
+WORK_SIZE = 512
+
+
+def open_image(data: bytes, work_size: int = WORK_SIZE) -> tuple[Image.Image, tuple[int, int]]:
+    """Decode ``data`` at a reduced size where the format allows it, plus the original size.
+
+    A 24 MP photo takes ~72 MB decoded, and every conversion copies it. JPEGs can
+    be decoded at 1/2, 1/4 or 1/8 scale directly (draft mode), which is faster and
+    keeps peak memory low. Raises like ``Image.open``/``load``.
+    """
+    img = Image.open(io.BytesIO(data))
+    size = img.size
+    if min(size) > work_size:
+        k = work_size / min(size)
+        img.draft(img.mode, (max(1, round(size[0] * k)), max(1, round(size[1] * k))))
+    img.load()
+    return img, size
+
+
+def work_copy(img: Image.Image, work_size: int = WORK_SIZE) -> Image.Image:
+    """The frame to classify (see ``representative_frame``), shrunk to ``work_size``."""
+    frame = representative_frame(img)
+    w, h = frame.size
+    if min(w, h) > work_size:
+        k = work_size / min(w, h)
+        frame = frame.resize((max(1, round(w * k)), max(1, round(h * k))), Image.Resampling.BILINEAR, reducing_gap=2.0)
+    return frame
+
+
+def download(client: httpx.Client, url: str, max_bytes: int) -> tuple[bytes, Image.Image, str, tuple[int, int]] | None:
     try:
         with client.stream("GET", url) as r:
             if r.status_code != 200 or not r.headers.get("content-type", "image/").startswith("image/"):
@@ -125,15 +156,15 @@ def download(client: httpx.Client, url: str, max_bytes: int) -> tuple[bytes, Ima
     except httpx.HTTPError:
         return None
     data = bytes(buf)
+    del buf
     try:
-        img = Image.open(io.BytesIO(data))
-        img.load()
+        img, size = open_image(data)
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
         return None
     ext = _EXT.get(img.format or "", None)
     if ext is None:
         return None
-    return data, img, ext
+    return data, img, ext, size
 
 
 def run(
@@ -167,13 +198,13 @@ def run(
         if res is None:
             stats["failed"] += 1
             return
-        data, img, ext = res
+        data, img, ext, size = res
         animated = getattr(img, "is_animated", False)
         # Animated GIFs are usually much smaller than photos, so they get their own limit.
-        if min(img.size) < (min_gif_size if animated else min_size):
+        if min(size) < (min_gif_size if animated else min_size):
             stats["too_small"] += 1
             return
-        img = representative_frame(img)
+        img = work_copy(img)
         h = imagehash.phash(img)
         if store.is_duplicate(h):
             stats["duplicate"] += 1
@@ -181,8 +212,8 @@ def run(
         result = classifier.classify(img)
         record = {
             **asdict(cand),
-            "width": img.size[0],
-            "height": img.size[1],
+            "width": size[0],
+            "height": size[1],
             "phash": str(h),
             "primary": result.primary,
             "labels": result.labels,
@@ -257,15 +288,15 @@ def sort_local(
     for p in files:
         data = p.read_bytes()
         try:
-            img = Image.open(io.BytesIO(data))
-            img.load()
-        except (UnidentifiedImageError, OSError):
+            img, size = open_image(data)
+        except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
             stats["failed"] += 1
             continue
-        if min(img.size) < min_size:
+        if min(size) < min_size:
             stats["too_small"] += 1
             continue
-        img = representative_frame(img)  # middle frame for animations
+        fmt = img.format
+        img = work_copy(img)  # middle frame for animations, shrunk
         h = imagehash.phash(img)
         if store.is_duplicate(h):
             stats["duplicate"] += 1
@@ -283,7 +314,7 @@ def sort_local(
             "tonal_scores": result.tonal_scores,
             "tone": result.tone,
         }
-        ext = _EXT.get(img.format or "", p.suffix.lstrip(".").lower())
+        ext = _EXT.get(fmt or "", p.suffix.lstrip(".").lower())
         out = store.save(data, ext, result.labels, record)
         if move:
             p.unlink()

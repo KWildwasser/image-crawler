@@ -309,8 +309,14 @@ async function fetchImages() {
   // New images go on top. Prepend instead of re-rendering, so scrolling stays smooth.
   if (gallery.shown === 0) { renderGrid(); return; }
   const fresh = j.images.filter(inTab);  // oldest first, so the newest ends up on top
-  for (const it of fresh) $("grid").prepend(tile(it));
-  gallery.shown += fresh.length;
+  const grid = $("grid");
+  for (const it of fresh) grid.prepend(tile(it));
+  // Keep the grid at the size the user asked for ("Show more" raises it), so a long
+  // crawl doesn't pile up thousands of tiles; the oldest drop off the bottom.
+  const cap = Math.max(PAGE, Math.ceil((gallery.shown || 1) / PAGE) * PAGE);
+  while (grid.childElementCount > cap) grid.lastElementChild.remove();
+  gallery.shown = grid.childElementCount;
+  $("moreBtn").hidden = gallery.shown >= list().length;
   $("empty").hidden = true;
 }
 function folderLabel(f) { return f === REJECTED ? "Rejected" : f; }
