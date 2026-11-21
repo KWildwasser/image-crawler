@@ -53,9 +53,21 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/KWildwasser/image-crawler.git
 cd image-crawler
 
-uv sync                 # also installs Python 3.14 if it's missing
-cp .env.example .env    # .env is git-ignored, so fill it in on each machine
+uv sync --managed-python   # uses uv's own Python 3.14, not Homebrew's
+cp .env.example .env       # .env is git-ignored, so fill it in on each machine
 ```
+
+**Error: torch "only has wheels for … `macosx_14_0_arm64`" on an Apple Silicon Mac.**
+uv picked up an Intel (`x86_64`) Python, usually from an Intel Homebrew in
+`/usr/local`, which is often carried over from an older Mac by Migration
+Assistant. Apple Silicon Homebrew lives in `/opt/homebrew`. To fix it:
+
+1. `uname -m` must print `arm64`. If it prints `x86_64`, your terminal runs
+   under Rosetta: quit it, then in Finder open Applications → Utilities,
+   choose Get Info on Terminal, untick **Open using Rosetta**, and reopen it.
+2. `file "$(which uv)"` must say `arm64`. If it says `x86_64`, reinstall uv
+   with the `curl` command above and open a new terminal.
+3. `rm -rf .venv && uv sync --managed-python`
 
 ## Usage
 
