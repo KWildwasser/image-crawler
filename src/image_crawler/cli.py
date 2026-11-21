@@ -81,6 +81,8 @@ def crawl(
     limit: Annotated[int, typer.Option("--limit", "-n", help="Stop after saving this many images per keyword per source (or in total for --url). 0 = no limit, run until Ctrl+C or the sources run out")] = 0,
     out: OutOpt = Path("output"),
     min_size: Annotated[int, typer.Option(help="Skip images whose shorter side is below this (px)")] = 400,
+    gifs: Annotated[bool, typer.Option(help="Also search for and keep animated GIFs")] = True,
+    min_gif_size: Annotated[int, typer.Option(help="Like --min-size, for animated GIFs (they are usually small)")] = 100,
     min_confidence: ConfOpt = 0.30,
     commercial: Annotated[bool, typer.Option(help="Openverse: only licenses allowing commercial use")] = False,
     mature: Annotated[bool, typer.Option(help="Openverse: include results marked as mature/explicit (--no-mature hides them)")] = True,
@@ -113,11 +115,11 @@ def crawl(
                 if Source.openverse in source:
                     gens.append(("openverse", c.query, sources.openverse(client, c.query, commercial=commercial, mature=mature)))
                 if Source.wikimedia in source:
-                    gens.append(("wikimedia", c.query, sources.wikimedia(client, c.query)))
+                    gens.append(("wikimedia", c.query, sources.wikimedia(client, c.query, gifs=gifs)))
                 if Source.pexels in source:
                     gens.append(("pexels", c.query, sources.pexels(client, c.query)))
                 if Source.web in source:
-                    gens.append(("web", c.query, sources.web(client, c.query)))
+                    gens.append(("web", c.query, sources.web(client, c.query, gifs=gifs)))
             gens = [
                 sources.limit_new(sources.safe(g), limit, lambda s=src, q=q: store.saved_count(s, q))
                 for src, q, g in gens
@@ -135,7 +137,11 @@ def crawl(
             full = lambda cand: store.saved_count() >= limit
         else:  # per keyword per source; images from followed pages have no quota
             full = lambda cand: cand.source != "followed" and store.saved_count(cand.source, cand.query) >= limit
-        stats = run(cands, client, store, classifier, min_size=min_size, workers=workers, full=full)
+        stats = run(
+            cands, client, store, classifier, min_size=min_size, workers=workers, full=full,
+            # --no-gifs: treat animations like photos, so the normal size limit applies
+            min_gif_size=min_gif_size if gifs else min_size,
+        )
 
     _summary(stats)
     console.print(f"Output: [bold]{out.resolve()}[/]  (attribution/licenses in metadata.jsonl)")

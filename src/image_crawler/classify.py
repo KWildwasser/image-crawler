@@ -132,11 +132,15 @@ class Classifier:
         # Multi-word searches add their near misses ("green house" for "green house
         # in snow") as distractors, so an image has to match the whole phrase.
         own = {p for c in self.semantic for p in c.prompts}
-        distractors = list(DISTRACTOR_PROMPTS)
+        contrasts: list[str] = []
         for c in self.semantic:
-            distractors += [p for p in c.contrasts if p not in own and p not in distractors]
-        self._labels = [c.name for c in self.semantic] + [f"_distractor{i}" for i in range(len(distractors))]
-        groups = [list(c.prompts) for c in self.semantic] + [[p] for p in distractors]
+            contrasts += [p for p in c.contrasts if p not in own and p not in contrasts and p not in DISTRACTOR_PROMPTS]
+        self._labels = (
+            [c.name for c in self.semantic]
+            + [f"_distractor{i}" for i in range(len(DISTRACTOR_PROMPTS))]
+            + [f"_contrast{i}" for i in range(len(contrasts))]
+        )
+        groups = [list(c.prompts) for c in self.semantic] + [[p] for p in DISTRACTOR_PROMPTS] + [[p] for p in contrasts]
         embs = []
         with torch.no_grad():
             for prompts in groups:
@@ -162,8 +166,10 @@ class Classifier:
             probs = (self._scale * e @ self._text.T).softmax(dim=-1)[0].tolist()
         scores = dict(zip(self._labels, probs))
         distract = sum(v for k, v in scores.items() if k.startswith("_distractor"))
-        out = {k: round(v, 4) for k, v in scores.items() if not k.startswith("_distractor")}
-        out["_other"] = round(distract, 4)
+        near = max((v for k, v in scores.items() if k.startswith("_contrast")), default=0.0)
+        out = {k: round(v, 4) for k, v in scores.items() if not k.startswith(("_distractor", "_contrast"))}
+        out["_other"] = round(distract, 4)  # off-topic: screenshots, logos, ... (summed)
+        out["_near_miss"] = round(near, 4)  # best "phrase minus one word" prompt
         return out
 
     # -- public -----------------------------------------------------------
@@ -173,9 +179,12 @@ class Classifier:
 
         if self.semantic:
             res.semantic_scores = self._semantic_scores(img)
-            cand = {k: v for k, v in res.semantic_scores.items() if k != "_other"}
+            sc = res.semantic_scores
+            cand = {k: v for k, v in sc.items() if not k.startswith("_")}
             best = max(cand, key=cand.get)
-            if cand[best] >= self.min_confidence and cand[best] > res.semantic_scores["_other"]:
+            # Off-topic prompts count together; a near miss ("car" for "red car") only
+            # has to be beaten on its own, since a true match fits it too.
+            if cand[best] >= self.min_confidence and cand[best] > sc["_other"] and cand[best] > sc["_near_miss"]:
                 res.primary = best
                 res.labels.append(best)
 

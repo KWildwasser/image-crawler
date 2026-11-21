@@ -40,6 +40,8 @@ output/
      competes with its near misses, the phrase with one word left out
      (`building in snow`, `green in snow`, `green building`), so an image has to
      match the whole description: a green building without snow is rejected.
+     (A near miss only has to be beaten on its own, so a real red car still
+     counts as `red car` even though it also looks like `car`.)
      Images below `--min-confidence` go to `_unsorted/`.
    - **Tonal searches** (`highkey`, `lowkey`, `bw`, on their own) are measured from the
      luminance histogram and saturation, which is more reliable than asking a
@@ -126,6 +128,14 @@ to `_unsorted`), `--min-size` (shorter side in px, default 400), `--model`
 literally, and "green house" usually means a glass *greenhouse*. Say
 `green building in snow` or `green painted house in snow` for green buildings.
 Folder names are the search in lower case with hyphens (`green-building-in-snow`).
+
+**Animated GIFs** are searched for and kept by default. The web search
+alternates photos with animated-GIF results, Wikimedia GIFs are included, and
+GIFs on crawled pages are kept. They're saved unchanged, so they stay
+animated; the classifier looks at a frame from the middle. GIFs are usually
+small, so they have their own size limit (`--min-gif-size`, default 100 px).
+They are also big files (often several MB each). `--no-gifs` turns all of this
+off. The summary counts them as `animated`.
 
 **What `-n` counts:** only images that are actually saved. Images that are too
 small (icons, logos), duplicates or already in the output folder don't count, so

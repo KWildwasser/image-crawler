@@ -100,6 +100,18 @@ def to_rgb(img: Image.Image) -> Image.Image:
     return img if img.mode in ("RGB", "L") else img.convert("RGB")
 
 
+def representative_frame(img: Image.Image) -> Image.Image:
+    """The frame to classify, as RGB. For an animation that's a middle frame: the
+    first one is often blank, a fade-in or a title card. The file itself is saved
+    unchanged, so it stays animated."""
+    if getattr(img, "is_animated", False):
+        try:
+            img.seek(img.n_frames // 2)
+        except EOFError:
+            img.seek(0)
+    return to_rgb(img)
+
+
 def download(client: httpx.Client, url: str, max_bytes: int) -> tuple[bytes, Image.Image, str] | None:
     try:
         with client.stream("GET", url) as r:
@@ -133,6 +145,7 @@ def run(
     max_bytes: int = 25 * 1024 * 1024,
     workers: int = 4,
     full: Callable[[Candidate], bool] = lambda cand: False,
+    min_gif_size: int = 100,
 ) -> Counter:
     """Download, classify and save ``candidates``.
 
@@ -149,10 +162,12 @@ def run(
             stats["failed"] += 1
             return
         data, img, ext = res
-        if min(img.size) < min_size:
+        animated = getattr(img, "is_animated", False)
+        # Animated GIFs are usually much smaller than photos, so they get their own limit.
+        if min(img.size) < (min_gif_size if animated else min_size):
             stats["too_small"] += 1
             return
-        img = to_rgb(img)
+        img = representative_frame(img)
         h = imagehash.phash(img)
         if store.is_duplicate(h):
             stats["duplicate"] += 1
@@ -174,6 +189,8 @@ def run(
         for lbl in result.labels or [UNSORTED]:
             stats[lbl] += 1
         stats["saved"] += 1
+        if animated:
+            stats["animated"] += 1
         console.print(f"[green]saved[/] {', '.join(result.labels) or UNSORTED:<24} {path.name}  [dim]{cand.title or ''}[/]"[:180])
 
     pending: dict[Future, Candidate] = {}
@@ -223,7 +240,7 @@ def sort_local(
     src: Path, store: Store, classifier: Classifier, min_size: int = 0, move: bool = False
 ) -> Counter:
     stats: Counter = Counter()
-    files = [p for p in sorted(src.rglob("*")) if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}]
+    files = [p for p in sorted(src.rglob("*")) if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff", ".bmp"}]
     for p in files:
         data = p.read_bytes()
         try:
@@ -235,7 +252,7 @@ def sort_local(
         if min(img.size) < min_size:
             stats["too_small"] += 1
             continue
-        img = to_rgb(img)
+        img = representative_frame(img)  # middle frame for animations
         h = imagehash.phash(img)
         if store.is_duplicate(h):
             stats["duplicate"] += 1

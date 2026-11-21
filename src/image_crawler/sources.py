@@ -143,7 +143,7 @@ def openverse(client: httpx.Client, query: str, commercial: bool = False, mature
 # --------------------------------------------------------------------------
 # Wikimedia Commons - freely licensed media
 # --------------------------------------------------------------------------
-def wikimedia(client: httpx.Client, query: str, width: int = 1600) -> Iterator[Candidate]:
+def wikimedia(client: httpx.Client, query: str, width: int = 1600, gifs: bool = True) -> Iterator[Candidate]:
     offset = 0
     while True:
         params = {
@@ -171,11 +171,13 @@ def wikimedia(client: httpx.Client, query: str, width: int = 1600) -> Iterator[C
             return
         for p in pages:
             info = (p.get("imageinfo") or [{}])[0]
-            if info.get("mime") not in ("image/jpeg", "image/png", "image/webp"):
+            mime = info.get("mime")
+            if mime not in ("image/jpeg", "image/png", "image/webp") and not (gifs and mime == "image/gif"):
                 continue
             meta = info.get("extmetadata", {})
             yield Candidate(
-                url=info.get("thumburl") or info["url"],
+                # GIF thumbnails can lose the animation, so take the original file.
+                url=info["url"] if mime == "image/gif" else (info.get("thumburl") or info["url"]),
                 source="wikimedia",
                 page_url=info.get("descriptionurl"),
                 title=p.get("title", "").removeprefix("File:"),
@@ -225,20 +227,35 @@ def pexels(client: httpx.Client, query: str) -> Iterator[Candidate]:
 # --------------------------------------------------------------------------
 # Web image search (Bing) - finds images on any site, SafeSearch off
 # --------------------------------------------------------------------------
-def web(client: httpx.Client, query: str, per_page: int = 35, max_empty: int = 2) -> Iterator[Candidate]:
+def web(client: httpx.Client, query: str, gifs: bool = True) -> Iterator[Candidate]:
     """Search the whole web for ``query`` through Bing image search, with SafeSearch off.
 
     Every result carries the image and the page it's on. With ``--follow`` (the
     default) those pages get a keyword-focused crawl, so the sites the search
-    finds are explored beyond the single image. Needs no key or setup. Pages
-    through the results until Bing returns nothing new ``max_empty`` times in a row.
+    finds are explored beyond the single image. Needs no key or setup.
+
+    With ``gifs``, photo results alternate with a search for animated GIFs (a
+    normal image search returns almost none).
     """
+    streams = [_bing_images(client, query)]
+    if gifs:
+        streams.append(_bing_images(client, query, qft="+filterui:photo-animatedgifhttps"))
+    yield from interleave(streams)
+
+
+def _bing_images(
+    client: httpx.Client, query: str, qft: str | None = None, per_page: int = 35, max_empty: int = 2
+) -> Iterator[Candidate]:
+    """One Bing image result list, paged until it returns nothing new ``max_empty`` times in a row."""
     first, empty = 1, 0
     seen: set[str] = set()
     while empty < max_empty:
+        params = {"q": query, "first": first, "count": per_page, "adlt": "off"}
+        if qft:
+            params["qft"] = qft
         r = client.get(
             "https://www.bing.com/images/async",
-            params={"q": query, "first": first, "count": per_page, "adlt": "off"},
+            params=params,
             cookies={"SRCHHPGUSR": "ADLT=OFF"},  # SafeSearch off
         )
         r.raise_for_status()
