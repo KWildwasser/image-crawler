@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -10,6 +13,40 @@ from PIL import Image
 from .categories import DISTRACTOR_PROMPTS, Category
 
 DEFAULT_MODEL = "openai/clip-vit-base-patch32"
+
+
+def _quiet_model_loading(model_name: str) -> None:
+    """Silence harmless library notices printed while the model loads.
+
+    Must run before torch / transformers / huggingface_hub are imported.
+    """
+    # torch prints "NOTE: Redirects are currently not supported in MacOs." on import (macOS only).
+    logging.getLogger("torch.distributed.elastic.multiprocessing.redirects").setLevel(logging.ERROR)
+    # The Hub replies "You are sending unauthenticated requests ... set a HF_TOKEN" to every
+    # anonymous request, even when the model is already cached. A cached model needs no
+    # network at all, so load it offline (also faster); otherwise mute the notice.
+    if "HF_HUB_OFFLINE" not in os.environ and _model_cached(model_name):
+        os.environ["HF_HUB_OFFLINE"] = "1"
+    logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
+
+
+def _model_cached(model_name: str) -> bool:
+    """Whether the model is fully in the Hugging Face cache.
+
+    Looks at the cache folder directly: importing huggingface_hub here would read
+    HF_HUB_OFFLINE before ``_quiet_model_loading`` gets to set it.
+    """
+    hub = os.environ.get("HF_HUB_CACHE") or os.path.join(
+        os.environ.get("HF_HOME") or os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "huggingface"),
+        "hub",
+    )
+    snapshots = Path(hub) / f"models--{model_name.replace('/', '--')}" / "snapshots"
+    needed = ("config.json", "preprocessor_config.json", "tokenizer_config.json")
+    weights = ("model.safetensors", "pytorch_model.bin")
+    for snap in snapshots.glob("*"):
+        if all((snap / f).exists() for f in needed) and any((snap / f).exists() for f in weights):
+            return True
+    return False
 
 
 @dataclass
@@ -80,9 +117,12 @@ class Classifier:
 
     # -- CLIP -------------------------------------------------------------
     def _load_clip(self, model_name: str) -> None:
+        _quiet_model_loading(model_name)
         import torch
         from transformers import CLIPModel, CLIPProcessor
+        from transformers.utils import logging as hf_logging
 
+        hf_logging.disable_progress_bar()  # the "Loading weights" bar
         self._torch = torch
         self._model = CLIPModel.from_pretrained(model_name).eval()
         self._proc = CLIPProcessor.from_pretrained(model_name)

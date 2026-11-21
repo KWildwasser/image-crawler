@@ -51,7 +51,8 @@ uv sync
 cp .env.example .env   # then fill in at least CRAWLER_CONTACT
 ```
 
-The first run downloads the CLIP model (~600 MB). It runs on CPU.
+The first run downloads the CLIP model (~600 MB). Later runs load it from the
+local cache without going online, so no `HF_TOKEN` is needed. It runs on CPU.
 
 ### macOS
 
