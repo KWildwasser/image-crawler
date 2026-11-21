@@ -41,6 +41,23 @@ cp .env.example .env   # then fill in at least CRAWLER_CONTACT
 
 The first run downloads the CLIP model (~600 MB). It runs on CPU.
 
+### macOS
+
+Requires Apple Silicon and macOS 14 or newer. The locked PyTorch build has
+no wheels for Intel Macs or older macOS.
+
+```bash
+# install uv (skip if you already have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# the repo is private: authenticate first (`gh auth login`) or clone via SSH
+git clone https://github.com/KWildwasser/image-crawler.git
+cd image-crawler
+
+uv sync                 # also installs Python 3.14 if it's missing
+cp .env.example .env    # .env is git-ignored, so fill it in on each machine
+```
+
 ## Usage
 
 ```bash
