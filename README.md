@@ -50,7 +50,6 @@ no wheels for Intel Macs or older macOS.
 # install uv (skip if you already have it)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# the repo is private: authenticate first (`gh auth login`) or clone via SSH
 git clone https://github.com/KWildwasser/image-crawler.git
 cd image-crawler
 
