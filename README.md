@@ -22,6 +22,12 @@ output/
    Website crawls are focused on the keywords: links that mention a keyword
    (in the URL, link text or title) are visited first and followed as deep as
    they go, while unrelated links are followed only a few hops (`--depth`).
+   API results are also followed to the page they came from (e.g. the Flickr
+   or museum page behind an Openverse hit), and that site gets a small crawl
+   focused on the same keyword (`--follow-pages`, default 10 pages). Up to 4
+   such pages are crawled at a time and at most 200 pages per host per run.
+   Wikimedia Commons and Pexels pages aren't followed, because their APIs
+   already cover them. Turn this off with `--no-follow`.
 2. **Download**: images are fetched in parallel, with size limits, a minimum
    resolution, and perceptual-hash deduplication across runs.
 3. **Classify**: search results are noisy, so every image is checked, not trusted:
@@ -86,8 +92,9 @@ uv run image-crawler crawl landscape architecture people highkey -n 20
 # choose sources and amount
 uv run image-crawler crawl landscape night -s pexels -n 50 -o ~/Pictures/crawl
 
-# only licenses that allow commercial use (Openverse)
-uv run image-crawler crawl architecture --commercial
+# only licenses that allow commercial use (Openverse); --no-follow keeps out
+# images from followed pages, whose license isn't known
+uv run image-crawler crawl architecture --commercial --no-follow
 
 # crawl a website (same host, obeys robots.txt, 1 s between pages),
 # going deep along keyword-related links; --max-pages caps it (default: no cap)
@@ -144,9 +151,12 @@ top of this README.
 | `wikimedia` | no | Requires `CRAWLER_CONTACT` (email or URL) in the User-Agent by [policy](https://w.wiki/4wJS). |
 | `pexels` | `PEXELS_API_KEY` | Free key, high-quality photography, Pexels license. |
 | `--url` | n/a | Generic crawler for sites you have permission to crawl. |
+| followed pages | n/a | Saved as `followed_….jpg`, with `page_url` but no license. On by default, `--no-follow` turns it off. |
 
 ## Licensing note
 
 Images keep their original licenses. `metadata.jsonl` records creator, license,
 and source page for each file. Check it before you publish anything, because CC
-licenses usually require attribution.
+licenses usually require attribution. Images with source `site` or `followed`
+come from crawled web pages and have **no license information**. Assume they are
+copyrighted unless the page says otherwise.

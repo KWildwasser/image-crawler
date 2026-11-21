@@ -7,8 +7,9 @@ import itertools
 import os
 import re
 import time
+from collections import Counter
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urljoin, urldefrag, urlparse
 from urllib.robotparser import RobotFileParser
 
@@ -241,20 +242,37 @@ def _largest_from_srcset(srcset: str) -> str | None:
 _GENERIC_TERMS = {"photo", "photos", "photograph", "photography", "image", "images", "picture", "pictures", "the", "and", "with", "of"}
 
 
-def keyword_terms(keywords: list[str], queries: list[str] = ()) -> list[str]:
-    """Lower-case terms used to judge whether a link is about the keywords."""
-    terms: set[str] = set()
-    for text in [*keywords, *queries]:
-        for w in re.split(r"[^\w]+", text.lower()):
-            if len(w) >= 3 and w not in _GENERIC_TERMS:
-                terms.add(w)
-    return sorted(terms)
+def keyword_terms(name: str, query: str, split_words: bool = True) -> list[str]:
+    """Lower-case terms used to judge whether a link is about one keyword.
+
+    The keyword itself and its search phrase always count ("high key", "high-key").
+    With ``split_words`` the phrase's single words count too; that's off for tonal
+    keywords, where "key" or "low" alone would match almost anything.
+    """
+    words = [w for w in re.split(r"[^\w]+", query.lower()) if w and w not in _GENERIC_TERMS]
+    terms = {name.lower()}
+    if words:
+        terms |= {" ".join(words), "-".join(words), "".join(words)}
+        if split_words:
+            terms |= {w for w in words if len(w) >= 3}
+    return sorted(t for t in terms if len(t) >= 3)
 
 
 def relevance(text: str, terms: list[str]) -> int:
     """Number of keyword terms that occur in ``text`` (substring match, so plurals count)."""
     text = text.lower()
     return sum(1 for t in terms if t in text)
+
+
+@dataclass
+class CrawlState:
+    """State shared between website crawls in one run."""
+
+    max_host_pages: int = 0  # 0 = no per-host budget
+    robots: dict[str, RobotFileParser] = field(default_factory=dict)
+    pages: set[str] = field(default_factory=set)
+    images: set[str] = field(default_factory=set)
+    host_pages: Counter = field(default_factory=Counter)
 
 
 def site(
@@ -265,6 +283,9 @@ def site(
     delay: float = 1.0,
     user_agent: str = "*",
     terms: list[str] = (),
+    source: str = "site",
+    query: str | None = None,
+    shared: CrawlState | None = None,
 ) -> Iterator[Candidate]:
     """Crawl the hosts of ``start_urls`` and yield every image found.
 
@@ -273,8 +294,13 @@ def site(
     so the crawler keeps going deeper along keyword-related pages. Unrelated links
     are still followed, but only up to ``max_depth`` hops from the last related page.
     ``max_pages <= 0`` means no page limit.
+
+    ``shared`` lets several crawls share robots.txt rules, visited pages and a
+    per-host page budget, so following many source pages on one host (e.g. Flickr)
+    neither re-fetches pages nor hammers that host.
     """
-    robots: dict[str, RobotFileParser] = {}
+    st = shared or CrawlState()
+    robots = st.robots
 
     def allowed(url: str) -> bool:
         p = urlparse(url)
@@ -294,13 +320,18 @@ def site(
     # (-relevance, depth, insertion order, url): most relevant first, then shallowest, then FIFO.
     queue: list[tuple[int, int, int, str]] = [(0, 0, next(order), u) for u in start_urls]
     queued: set[str] = set(start_urls)
-    seen_imgs: set[str] = set()
+    seen_imgs = st.images
     pages = 0
 
     while queue and (max_pages <= 0 or pages < max_pages):
         _, depth, _, url = heapq.heappop(queue)
-        if not allowed(url):
+        host = urlparse(url).netloc
+        if url in st.pages or not allowed(url):
             continue
+        if st.max_host_pages and st.host_pages[host] >= st.max_host_pages:
+            continue
+        st.pages.add(url)
+        st.host_pages[host] += 1
         try:
             r = client.get(url)
         except httpx.HTTPError:
@@ -329,7 +360,7 @@ def site(
             if full in seen_imgs or _SKIP_EXT.search(full) or not allowed(full):
                 continue
             seen_imgs.add(full)
-            yield Candidate(url=full, source="site", page_url=str(r.url), title=alt)
+            yield Candidate(url=full, source=source, page_url=str(r.url), title=alt, query=query)
 
         for a in soup.find_all("a", href=True):
             nxt = urldefrag(urljoin(str(r.url), a["href"]))[0]
@@ -342,3 +373,79 @@ def site(
                 continue
             queued.add(nxt)
             heapq.heappush(queue, (-score, nxt_depth, next(order), nxt))
+
+
+# --------------------------------------------------------------------------
+# Following API results to their source pages
+# --------------------------------------------------------------------------
+# These hosts are already searched through their API (and Pexels doesn't allow
+# scraping), so their HTML pages aren't crawled.
+_NO_FOLLOW_HOSTS = {"commons.wikimedia.org", "pexels.com", "www.pexels.com", "openverse.org"}
+
+
+class FollowMixer:
+    """Round-robin over the API sources and crawls of the pages their results came from.
+
+    Each API result's ``page_url`` (e.g. the Flickr or museum page behind an
+    Openverse hit) is queued. Up to ``parallel`` of those pages are crawled at a
+    time, each a small keyword-focused crawl of that page's site
+    (``pages_per_source`` pages), taking turns with the API sources.
+    """
+
+    def __init__(
+        self,
+        client: httpx.Client,
+        gens: list[Iterator[Candidate]],
+        terms_for: Callable[[str | None], list[str]],
+        pages_per_source: int = 10,
+        max_depth: int = 1,
+        delay: float = 1.0,
+        parallel: int = 4,
+        max_host_pages: int = 200,
+    ) -> None:
+        self.client = client
+        self.gens = gens
+        self.terms_for = terms_for
+        self.pages_per_source = pages_per_source
+        self.max_depth = max_depth
+        self.delay = delay
+        self.parallel = parallel
+        self.state = CrawlState(max_host_pages=max_host_pages)
+        self.backlog: list[tuple[str, str | None]] = []
+        self.queued: set[str] = set()
+
+    def _note(self, cand: Candidate) -> None:
+        url = cand.page_url
+        if not url or url in self.queued or not url.startswith(("http://", "https://")):
+            return
+        if urlparse(url).netloc.lower() in _NO_FOLLOW_HOSTS:
+            return
+        self.queued.add(url)
+        self.backlog.append((url, cand.query))
+
+    def _crawl(self, url: str, query: str | None) -> Iterator[Candidate]:
+        return safe(site(
+            self.client, [url], max_pages=self.pages_per_source, max_depth=self.max_depth,
+            delay=self.delay, terms=self.terms_for(query), source="followed", query=query,
+            shared=self.state,
+        ))
+
+    def __iter__(self) -> Iterator[Candidate]:
+        apis = list(self.gens)
+        crawls: list[Iterator[Candidate]] = []
+        while apis or crawls or self.backlog:
+            while self.backlog and len(crawls) < self.parallel:
+                crawls.append(self._crawl(*self.backlog.pop(0)))
+            for g in list(apis):
+                try:
+                    cand = next(g)
+                except StopIteration:
+                    apis.remove(g)
+                    continue
+                self._note(cand)
+                yield cand
+            for g in list(crawls):
+                try:
+                    yield next(g)
+                except StopIteration:
+                    crawls.remove(g)

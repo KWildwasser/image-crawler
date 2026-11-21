@@ -66,7 +66,9 @@ def crawl(
     commercial: Annotated[bool, typer.Option(help="Openverse: only licenses allowing commercial use")] = False,
     max_pages: Annotated[int, typer.Option(help="--url: max pages to visit (0 = no limit)")] = 0,
     depth: Annotated[int, typer.Option(help="--url: max hops along links unrelated to the keywords (keyword-related links don't count)")] = 2,
-    delay: Annotated[float, typer.Option(help="--url: seconds between page requests")] = 1.0,
+    delay: Annotated[float, typer.Option(help="Seconds between web page requests (--url and --follow)")] = 1.0,
+    follow: Annotated[bool, typer.Option(help="API mode: also crawl the web pages the API results come from, focused on the keyword")] = True,
+    follow_pages: Annotated[int, typer.Option(help="--follow: pages to crawl around each source page")] = 10,
     workers: Annotated[int, typer.Option(help="Parallel image downloads")] = 4,
     model: ModelOpt = DEFAULT_MODEL,
 ) -> None:
@@ -83,7 +85,7 @@ def crawl(
     with _client() as client:
         seen = store.seen_url
         if url:
-            terms = sources.keyword_terms([c.name for c in cats], [c.query for c in cats])
+            terms = sorted({t for c in cats for t in sources.keyword_terms(c.name, c.query, not c.tonal)})
             site = sources.site(client, url, max_pages=max_pages, max_depth=depth, delay=delay, terms=terms)
             cands = sources.limit_new(sources.safe(site), limit, seen)
         else:
@@ -95,7 +97,14 @@ def crawl(
                     gens.append(sources.wikimedia(client, c.query))
                 if Source.pexels in source:
                     gens.append(sources.pexels(client, c.query))
-            cands = sources.interleave([sources.limit_new(sources.safe(g), limit, seen) for g in gens])
+            gens = [sources.limit_new(sources.safe(g), limit, seen) for g in gens]
+            if follow:
+                by_query = {c.query: sources.keyword_terms(c.name, c.query, not c.tonal) for c in cats}
+                cands = iter(sources.FollowMixer(
+                    client, gens, lambda q: by_query.get(q, []), pages_per_source=follow_pages, delay=delay,
+                ))
+            else:
+                cands = sources.interleave(gens)
         stats = run(cands, client, store, classifier, min_size=min_size, workers=workers)
 
     _summary(stats)
