@@ -92,9 +92,8 @@ uv run image-crawler crawl landscape architecture people highkey -n 20
 # choose sources and amount
 uv run image-crawler crawl landscape night -s pexels -n 50 -o ~/Pictures/crawl
 
-# only licenses that allow commercial use (Openverse); --no-follow keeps out
-# images from followed pages, whose license isn't known
-uv run image-crawler crawl architecture --commercial --no-follow
+# only licenses that allow commercial use (Openverse)
+uv run image-crawler crawl architecture --commercial
 
 # crawl a website (same host, obeys robots.txt, 1 s between pages),
 # going deep along keyword-related links; --max-pages caps it (default: no cap)
@@ -151,12 +150,4 @@ top of this README.
 | `wikimedia` | no | Requires `CRAWLER_CONTACT` (email or URL) in the User-Agent by [policy](https://w.wiki/4wJS). |
 | `pexels` | `PEXELS_API_KEY` | Free key, high-quality photography, Pexels license. |
 | `--url` | n/a | Generic crawler for sites you have permission to crawl. |
-| followed pages | n/a | Saved as `followed_….jpg`, with `page_url` but no license. On by default, `--no-follow` turns it off. |
-
-## Licensing note
-
-Images keep their original licenses. `metadata.jsonl` records creator, license,
-and source page for each file. Check it before you publish anything, because CC
-licenses usually require attribution. Images with source `site` or `followed`
-come from crawled web pages and have **no license information**. Assume they are
-copyrighted unless the page says otherwise.
+| followed pages | n/a | Saved as `followed_….jpg`, with `page_url`. On by default, `--no-follow` turns it off. |
