@@ -106,7 +106,7 @@ def _openverse_headers(client: httpx.Client) -> dict[str, str]:
     return {"Authorization": f"Bearer {_ov_token}"}
 
 
-def openverse(client: httpx.Client, query: str, commercial: bool = False, mature: bool = False) -> Iterator[Candidate]:
+def openverse(client: httpx.Client, query: str, commercial: bool = False, mature: bool = True) -> Iterator[Candidate]:
     page = 1
     headers = _openverse_headers(client)
     while True:

@@ -67,7 +67,7 @@ def crawl(
     min_size: Annotated[int, typer.Option(help="Skip images whose shorter side is below this (px)")] = 400,
     min_confidence: ConfOpt = 0.30,
     commercial: Annotated[bool, typer.Option(help="Openverse: only licenses allowing commercial use")] = False,
-    mature: Annotated[bool, typer.Option(help="Openverse: include results marked as mature (hidden by default)")] = False,
+    mature: Annotated[bool, typer.Option(help="Openverse: include results marked as mature/explicit (--no-mature hides them)")] = True,
     max_pages: Annotated[int, typer.Option(help="--url: max pages to visit (0 = no limit)")] = 0,
     depth: Annotated[int, typer.Option(help="--url: max hops along links unrelated to the keywords (keyword-related links don't count)")] = 2,
     delay: Annotated[float, typer.Option(help="Seconds between web page requests (--url and --follow)")] = 1.0,

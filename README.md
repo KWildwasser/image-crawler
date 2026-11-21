@@ -122,9 +122,11 @@ a website full of thumbnails won't use up the limit.
 stays at 0 for a while, the sources return images that get filtered out (too
 small, failed downloads) or return nothing at all (`found 0`).
 
-**Mature results:** Openverse hides results marked as mature by default. Add
-`--mature` to include them. Wikimedia Commons doesn't filter, and Pexels has no
-such content.
+**Mature and explicit results are included.** The crawler doesn't filter
+content. Openverse is asked to include results it marks as mature (which covers
+explicit material); add `--no-mature` to hide them. Wikimedia Commons and
+website crawls aren't filtered either. Pexels hosts no explicit content and its
+API has no setting for it.
 
 **If a run saves nothing**, read the warnings it prints. A site that refuses the
 crawler (HTTP 403, robots.txt) is reported by name. Wikipedia and Wikimedia
