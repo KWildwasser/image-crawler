@@ -38,32 +38,34 @@ def safe(gen: Iterator[Candidate]) -> Iterator[Candidate]:
     try:
         yield from gen
     except (httpx.HTTPError, ValueError) as e:
-        from rich.console import Console
-
-        Console(stderr=True).print(f"[yellow]warning:[/] source {getattr(gen, '__name__', '?')} failed: {e}".splitlines()[0])
+        _warn(f"source {getattr(gen, '__name__', '?')} failed: {e}".splitlines()[0])
 
 
-def limit_new(cands: Iterator[Candidate], limit: int, seen: Callable[[str], bool]) -> Iterator[Candidate]:
-    """Pass candidates through until ``limit`` new ones have been yielded.
+def _warn(msg: str) -> None:
+    from rich.console import Console
+
+    Console(stderr=True).print(f"[yellow]warning:[/] {msg}")
+
+
+def limit_new(cands: Iterator[Candidate], limit: int, saved: Callable[[], int]) -> Iterator[Candidate]:
+    """Pass candidates through until ``saved()`` reports ``limit`` saved images.
 
     ``limit <= 0`` means no limit: everything the source produces is passed on.
 
-    Already-saved URLs (``seen``) are still yielded, so the pipeline can count them,
-    but they don't use up the limit. Re-running a crawl therefore continues past the
-    images you already have instead of re-checking the same first results. Sources
-    are lazy, so the next result page is only requested when it's needed.
+    Only images that were actually saved count, not ones that are too small,
+    duplicates or already in the output folder. Re-running a crawl therefore
+    continues past the images you already have, and a website full of icons
+    doesn't use up the limit. Sources are lazy, so the next result page is only
+    requested when it's needed. Downloads run in parallel, so a few more than
+    ``limit`` images may be saved.
     """
     if limit <= 0:
         yield from cands
         return
-    new = 0
     for cand in cands:
-        is_new = not seen(cand.url)  # check before yielding: the pipeline marks it seen
+        if saved() >= limit:
+            return
         yield cand
-        if is_new:
-            new += 1
-            if new >= limit:
-                return
 
 
 def interleave(gens: list[Iterator[Candidate]]) -> Iterator[Candidate]:
@@ -326,7 +328,11 @@ def site(
     while queue and (max_pages <= 0 or pages < max_pages):
         _, depth, _, url = heapq.heappop(queue)
         host = urlparse(url).netloc
-        if url in st.pages or not allowed(url):
+        if url in st.pages:
+            continue
+        if not allowed(url):
+            if url in start_urls and source == "site":
+                _warn(f"robots.txt does not allow crawling {url}")
             continue
         if st.max_host_pages and st.host_pages[host] >= st.max_host_pages:
             continue
@@ -334,11 +340,17 @@ def site(
         st.host_pages[host] += 1
         try:
             r = client.get(url)
-        except httpx.HTTPError:
+        except httpx.HTTPError as e:
+            if url in start_urls and source == "site":
+                _warn(f"could not fetch {url}: {e}")
             continue
         pages += 1
         time.sleep(delay)
         if r.status_code != 200 or "html" not in r.headers.get("content-type", ""):
+            # A refused start page usually means the whole site refuses us; say so
+            # instead of ending with an empty result. (Followed source pages stay quiet.)
+            if url in start_urls and source == "site":
+                _warn(f"{url} returned HTTP {r.status_code}: {r.text[:120].strip()}")
             continue
         soup = BeautifulSoup(r.text, "html.parser")
         title = soup.title.get_text(strip=True) if soup.title else None

@@ -42,6 +42,9 @@ def _client() -> httpx.Client:
 
 
 def _summary(stats) -> None:
+    if not stats:
+        console.print("[yellow]Nothing found.[/] Check the warnings above.")
+        return
     t = Table(title="Summary", show_header=False)
     for k, v in sorted(stats.items(), key=lambda kv: (-kv[1], kv[0])):
         t.add_row(k, str(v))
@@ -59,7 +62,7 @@ def crawl(
     keywords: KeywordsArg,
     source: Annotated[list[Source], typer.Option("--source", "-s", help="API source(s) to search")] = [Source.openverse, Source.wikimedia],
     url: Annotated[list[str], typer.Option("--url", "-u", help="Crawl these websites instead of the APIs (repeatable)")] = [],
-    limit: Annotated[int, typer.Option("--limit", "-n", help="Stop after this many new images per keyword per source (or in total for --url). 0 = no limit, run until Ctrl+C or the sources run out")] = 0,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Stop after saving this many images per keyword per source (or in total for --url). 0 = no limit, run until Ctrl+C or the sources run out")] = 0,
     out: OutOpt = Path("output"),
     min_size: Annotated[int, typer.Option(help="Skip images whose shorter side is below this (px)")] = 400,
     min_confidence: ConfOpt = 0.30,
@@ -83,21 +86,23 @@ def crawl(
     store = Store(out)
 
     with _client() as client:
-        seen = store.seen_url
         if url:
             terms = sorted({t for c in cats for t in sources.keyword_terms(c.name, c.query, not c.tonal)})
             site = sources.site(client, url, max_pages=max_pages, max_depth=depth, delay=delay, terms=terms)
-            cands = sources.limit_new(sources.safe(site), limit, seen)
+            cands = sources.limit_new(sources.safe(site), limit, store.saved_count)
         else:
             gens = []
             for c in cats:
                 if Source.openverse in source:
-                    gens.append(sources.openverse(client, c.query, commercial=commercial))
+                    gens.append(("openverse", c.query, sources.openverse(client, c.query, commercial=commercial)))
                 if Source.wikimedia in source:
-                    gens.append(sources.wikimedia(client, c.query))
+                    gens.append(("wikimedia", c.query, sources.wikimedia(client, c.query)))
                 if Source.pexels in source:
-                    gens.append(sources.pexels(client, c.query))
-            gens = [sources.limit_new(sources.safe(g), limit, seen) for g in gens]
+                    gens.append(("pexels", c.query, sources.pexels(client, c.query)))
+            gens = [
+                sources.limit_new(sources.safe(g), limit, lambda s=src, q=q: store.saved_count(s, q))
+                for src, q, g in gens
+            ]
             if follow:
                 by_query = {c.query: sources.keyword_terms(c.name, c.query, not c.tonal) for c in cats}
                 cands = iter(sources.FollowMixer(

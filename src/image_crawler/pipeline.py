@@ -39,6 +39,8 @@ class Store:
         self.dedup_distance = dedup_distance
         self.hashes: list[imagehash.ImageHash] = []
         self.urls: set[str] = set()
+        # Images saved in this run, per (source, query); used by ``sources.limit_new``.
+        self.saved_by: Counter = Counter()
         self._lock = threading.Lock()
         if self.meta_path.exists():
             for line in self.meta_path.read_text().splitlines():
@@ -49,6 +51,12 @@ class Store:
                 self.urls.add(rec.get("url", ""))
                 if rec.get("phash"):
                     self.hashes.append(imagehash.hex_to_hash(rec["phash"]))
+
+    def saved_count(self, source: str | None = None, query: str | None = None) -> int:
+        """Images saved in this run, for one source/query pair or (no arguments) in total."""
+        if source is None:
+            return sum(self.saved_by.values())
+        return self.saved_by[(source, query)]
 
     def seen_url(self, url: str) -> bool:
         return url in self.urls
@@ -78,6 +86,7 @@ class Store:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
             self.urls.add(record["url"])
             self.hashes.append(imagehash.hex_to_hash(record["phash"]))
+            self.saved_by[(record["source"], record.get("query"))] += 1
         return first
 
 

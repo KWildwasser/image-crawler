@@ -86,7 +86,7 @@ Assistant. Apple Silicon Homebrew lives in `/opt/homebrew`. To fix it:
 # search the APIs until they run out of results (Ctrl+C to stop at any time)
 uv run image-crawler crawl landscape architecture people highkey
 
-# stop after 20 new images per keyword per source (run again for 20 more)
+# stop after saving 20 images per keyword per source (run again for 20 more)
 uv run image-crawler crawl landscape architecture people highkey -n 20
 
 # choose sources and amount
@@ -99,6 +99,9 @@ uv run image-crawler crawl architecture --commercial
 # going deep along keyword-related links; --max-pages caps it (default: no cap)
 uv run image-crawler crawl landscape people --url https://example.com/gallery --max-pages 300
 
+# a quick test run: public-domain National Park Service pages, 20 images
+uv run image-crawler crawl landscape architecture --url https://www.nps.gov/yose/learn/photosmultimedia/photogallery.htm -n 20 -o /tmp/crawl-test
+
 # sort images you already have
 uv run image-crawler sort ~/Pictures/unsorted landscape architecture people highkey lowkey -o ~/Pictures/sorted
 
@@ -109,6 +112,16 @@ uv run image-crawler keywords
 Useful options: `--min-confidence` (default 0.30; higher is stricter and sends more
 to `_unsorted`), `--min-size` (shorter side in px, default 400), `--model`
 (e.g. `openai/clip-vit-large-patch14` for better accuracy at ~3× the cost).
+
+**What `-n` counts:** only images that are actually saved. Images that are too
+small (icons, logos), duplicates or already in the output folder don't count, so
+a website full of thumbnails won't use up the limit. Downloads run in parallel,
+so a run can save one or two more images than `-n`.
+
+**If a run saves nothing**, read the warnings it prints. A site that refuses the
+crawler (HTTP 403, robots.txt) is reported by name. Wikipedia and Wikimedia
+Commons refuse every request without a contact address, so set
+`CRAWLER_CONTACT` in `.env` for them.
 
 ## Where images are saved
 
@@ -129,7 +142,7 @@ top of this README.
 - **Re-runs continue where the last one stopped.** With the same `-o` folder,
   `crawl` reads `metadata.jsonl`, skips images that are already saved (by URL,
   and by perceptual hash for the same picture at another URL), and keeps going
-  through later search results (until it has `-n` *new* images per keyword per
+  through later search results (until it has saved `-n` images per keyword per
   source, if you set `-n`). It stops when a source runs out of results. Ctrl+C
   stops cleanly: everything saved so far is complete and recorded. The run summary
   shows skipped images as `already_have`. Each run still pages through the
