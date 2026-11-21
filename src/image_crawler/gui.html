@@ -88,6 +88,16 @@
   .vinfo .meta { color: #aaa; font-size: 12px; margin-top: 4px; }
   .vbtns { display: flex; gap: 8px; }
   .vbtns button { background: rgba(255,255,255,.14); color: #fff; padding: 8px 14px; font-weight: 500; }
+  /* fullscreen viewer: image fills the screen, buttons float and fade when idle */
+  dialog.full { width: 100vw; height: 100vh; max-width: none; max-height: none; margin: 0; background: #000; }
+  dialog.full .viewer { height: 100%; justify-content: center; position: relative; }
+  dialog.full .viewer img { max-width: 100vw; max-height: 100vh; border-radius: 0; }
+  dialog.full .vinfo { display: none; }
+  dialog.full .vbtns { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    flex-wrap: wrap; justify-content: center; transition: opacity .3s; }
+  dialog.full .vbtns button { background: rgba(30,30,30,.75); }
+  dialog.full.idle { cursor: none; }
+  dialog.full.idle .vbtns { opacity: 0; pointer-events: none; }
 
   @media (max-width: 560px) {
     .search { flex-direction: column; }
@@ -183,6 +193,7 @@
       <button id="vprev" type="button">← Prev</button>
       <button id="vsrc" type="button">Source page</button>
       <button id="vfolder" type="button">Show in folder</button>
+      <button id="vfull" type="button" title="Fullscreen (F)">Fullscreen</button>
       <button id="vclose" type="button">Close</button>
       <button id="vnext" type="button">Next →</button>
     </div>
@@ -379,12 +390,51 @@ $("vnext").onclick = () => step(1);
 $("vclose").onclick = () => $("viewer").close();
 $("vsrc").onclick = () => current && current.page_url && window.open(current.page_url, "_blank", "noopener");
 $("vfolder").onclick = () => current && post("/api/open", { out: gallery.out, folder: current.folders[0] });
-$("viewer").addEventListener("click", (e) => { if (e.target === $("viewer")) $("viewer").close(); });
+$("viewer").addEventListener("click", (e) => {
+  if (e.target === $("viewer") && !isFull()) $("viewer").close();
+});
 document.addEventListener("keydown", (e) => {
   if (!$("viewer").open) return;
   if (e.key === "ArrowLeft") step(-1);
   if (e.key === "ArrowRight") step(1);
+  if (e.key === "f" || e.key === "F") toggleFull();
 });
+
+// fullscreen: the browser's Fullscreen API where available (Esc leaves it),
+// otherwise (e.g. iPhone Safari) the viewer just fills the window
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+const isFull = () => $("viewer").classList.contains("full");
+function setFull(on) {
+  $("viewer").classList.toggle("full", on);
+  $("vfull").textContent = on ? "Exit fullscreen" : "Fullscreen";
+  if (on) wake(); else $("viewer").classList.remove("idle");
+}
+function toggleFull() {
+  const v = $("viewer");
+  const req = v.requestFullscreen || v.webkitRequestFullscreen;
+  const exit = document.exitFullscreen || document.webkitExitFullscreen;
+  if (fsElement()) exit.call(document);
+  else if (isFull()) setFull(false);
+  else if (req) req.call(v)?.catch?.(() => setFull(true));
+  else setFull(true);
+}
+for (const ev of ["fullscreenchange", "webkitfullscreenchange"]) {
+  document.addEventListener(ev, () => setFull(fsElement() === $("viewer")));
+}
+$("vfull").onclick = toggleFull;
+$("vimg").addEventListener("dblclick", toggleFull);
+$("viewer").addEventListener("close", () => {  // closing the viewer also leaves fullscreen
+  if (fsElement()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  setFull(false);
+});
+let idleTimer = 0;
+function wake() {  // show the buttons again; hide them after 2 s without mouse movement
+  $("viewer").classList.remove("idle");
+  clearTimeout(idleTimer);
+  if (isFull()) idleTimer = setTimeout(() => $("viewer").classList.add("idle"), 2000);
+}
+$("viewer").addEventListener("mousemove", wake);
+$("viewer").addEventListener("touchstart", wake, { passive: true });
 
 // ---------- loop ----------
 resetGallery($("out").value);
