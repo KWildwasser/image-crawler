@@ -9,11 +9,12 @@ import os
 import shutil
 import threading
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 import imagehash
@@ -131,10 +132,19 @@ def run(
     min_size: int = 400,
     max_bytes: int = 25 * 1024 * 1024,
     workers: int = 4,
+    full: Callable[[Candidate], bool] = lambda cand: False,
 ) -> Counter:
+    """Download, classify and save ``candidates``.
+
+    ``full(cand)`` says whether the candidate's ``-n`` quota is already used up.
+    Several downloads run at once, so results that finish after the quota filled
+    up are dropped instead of saved, which keeps ``-n`` exact.
+    """
     stats: Counter = Counter()
 
     def handle(cand: Candidate, res: tuple[bytes, Image.Image, str] | None) -> None:
+        if full(cand):
+            return
         if res is None:
             stats["failed"] += 1
             return
@@ -168,17 +178,34 @@ def run(
 
     pending: dict[Future, Candidate] = {}
     pool = ThreadPoolExecutor(max_workers=workers)
+    found = 0
+
+    def progress(doing: str) -> str:
+        # A live line, so a run that hasn't saved anything yet doesn't look stuck.
+        parts = [f"found {found}", f"saved {stats['saved']}"]
+        parts += [f"{k.replace('_', ' ')} {stats[k]}" for k in ("already_have", "too_small", "duplicate", "failed") if stats[k]]
+        return f"{' · '.join(parts)}  [dim]{doing}[/]"
+
+    status = console.status(progress("searching ..."))
+    status.start()
     try:
         for cand in candidates:
+            found += 1
             if store.seen_url(cand.url):
                 stats["already_have"] += 1
+                status.update(progress("searching ..."))
+                continue
+            if full(cand):
                 continue
             store.urls.add(cand.url)  # avoid fetching the same URL twice in one run
             pending[pool.submit(download, client, cand.url, max_bytes)] = cand
+            status.update(progress(f"downloading from {urlparse(cand.url).netloc}"))
             if len(pending) >= workers * 2:
                 done, _ = wait(pending, return_when=FIRST_COMPLETED)
                 for f in done:
                     handle(pending.pop(f), f.result())
+            status.update(progress("searching ..."))
+        status.update(progress("finishing downloads ..."))
         for f in list(pending):
             handle(pending.pop(f), f.result())
     except KeyboardInterrupt:
@@ -187,6 +214,7 @@ def run(
         console.print("[yellow]Interrupted, stopping.[/]")
         stats["interrupted"] = 1
     finally:
+        status.stop()
         pool.shutdown(wait=False, cancel_futures=True)
     return stats
 

@@ -115,8 +115,16 @@ to `_unsorted`), `--min-size` (shorter side in px, default 400), `--model`
 
 **What `-n` counts:** only images that are actually saved. Images that are too
 small (icons, logos), duplicates or already in the output folder don't count, so
-a website full of thumbnails won't use up the limit. Downloads run in parallel,
-so a run can save one or two more images than `-n`.
+a website full of thumbnails won't use up the limit.
+
+**Progress:** while it runs, `crawl` shows a live line such as
+`found 13 · saved 2 · too small 3  downloading from www.nps.gov`. If `saved`
+stays at 0 for a while, the sources return images that get filtered out (too
+small, failed downloads) or return nothing at all (`found 0`).
+
+**Mature results:** Openverse hides results marked as mature by default. Add
+`--mature` to include them. Wikimedia Commons doesn't filter, and Pexels has no
+such content.
 
 **If a run saves nothing**, read the warnings it prints. A site that refuses the
 crawler (HTTP 403, robots.txt) is reported by name. Wikipedia and Wikimedia

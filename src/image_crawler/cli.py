@@ -67,6 +67,7 @@ def crawl(
     min_size: Annotated[int, typer.Option(help="Skip images whose shorter side is below this (px)")] = 400,
     min_confidence: ConfOpt = 0.30,
     commercial: Annotated[bool, typer.Option(help="Openverse: only licenses allowing commercial use")] = False,
+    mature: Annotated[bool, typer.Option(help="Openverse: include results marked as mature (hidden by default)")] = False,
     max_pages: Annotated[int, typer.Option(help="--url: max pages to visit (0 = no limit)")] = 0,
     depth: Annotated[int, typer.Option(help="--url: max hops along links unrelated to the keywords (keyword-related links don't count)")] = 2,
     delay: Annotated[float, typer.Option(help="Seconds between web page requests (--url and --follow)")] = 1.0,
@@ -94,7 +95,7 @@ def crawl(
             gens = []
             for c in cats:
                 if Source.openverse in source:
-                    gens.append(("openverse", c.query, sources.openverse(client, c.query, commercial=commercial)))
+                    gens.append(("openverse", c.query, sources.openverse(client, c.query, commercial=commercial, mature=mature)))
                 if Source.wikimedia in source:
                     gens.append(("wikimedia", c.query, sources.wikimedia(client, c.query)))
                 if Source.pexels in source:
@@ -110,7 +111,13 @@ def crawl(
                 ))
             else:
                 cands = sources.interleave(gens)
-        stats = run(cands, client, store, classifier, min_size=min_size, workers=workers)
+        if limit <= 0:
+            full = lambda cand: False
+        elif url:
+            full = lambda cand: store.saved_count() >= limit
+        else:  # per keyword per source; images from followed pages have no quota
+            full = lambda cand: cand.source != "followed" and store.saved_count(cand.source, cand.query) >= limit
+        stats = run(cands, client, store, classifier, min_size=min_size, workers=workers, full=full)
 
     _summary(stats)
     console.print(f"Output: [bold]{out.resolve()}[/]  (attribution/licenses in metadata.jsonl)")

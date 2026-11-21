@@ -56,8 +56,8 @@ def limit_new(cands: Iterator[Candidate], limit: int, saved: Callable[[], int]) 
     duplicates or already in the output folder. Re-running a crawl therefore
     continues past the images you already have, and a website full of icons
     doesn't use up the limit. Sources are lazy, so the next result page is only
-    requested when it's needed. Downloads run in parallel, so a few more than
-    ``limit`` images may be saved.
+    requested when it's needed. (Downloads that were already running when the
+    limit was reached are dropped by the pipeline, see ``pipeline.run``.)
     """
     if limit <= 0:
         yield from cands
@@ -106,11 +106,11 @@ def _openverse_headers(client: httpx.Client) -> dict[str, str]:
     return {"Authorization": f"Bearer {_ov_token}"}
 
 
-def openverse(client: httpx.Client, query: str, commercial: bool = False) -> Iterator[Candidate]:
+def openverse(client: httpx.Client, query: str, commercial: bool = False, mature: bool = False) -> Iterator[Candidate]:
     page = 1
     headers = _openverse_headers(client)
     while True:
-        params = {"q": query, "page_size": 20, "page": page, "mature": "false"}
+        params = {"q": query, "page_size": 20, "page": page, "mature": "true" if mature else "false"}
         if commercial:
             params["license_type"] = "commercial"
         r = client.get(f"{_OV}/images/", params=params, headers=headers)
