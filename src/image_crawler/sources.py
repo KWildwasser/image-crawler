@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import heapq
+import json
 import itertools
 import os
 import re
@@ -219,6 +220,43 @@ def pexels(client: httpx.Client, query: str) -> Iterator[Candidate]:
                 query=query,
             )
         page += 1
+
+
+# --------------------------------------------------------------------------
+# Web image search (Bing) - finds images on any site, SafeSearch off
+# --------------------------------------------------------------------------
+def web(client: httpx.Client, query: str, per_page: int = 35, max_empty: int = 2) -> Iterator[Candidate]:
+    """Search the whole web for ``query`` through Bing image search, with SafeSearch off.
+
+    Every result carries the image and the page it's on. With ``--follow`` (the
+    default) those pages get a keyword-focused crawl, so the sites the search
+    finds are explored beyond the single image. Needs no key or setup. Pages
+    through the results until Bing returns nothing new ``max_empty`` times in a row.
+    """
+    first, empty = 1, 0
+    seen: set[str] = set()
+    while empty < max_empty:
+        r = client.get(
+            "https://www.bing.com/images/async",
+            params={"q": query, "first": first, "count": per_page, "adlt": "off"},
+            cookies={"SRCHHPGUSR": "ADLT=OFF"},  # SafeSearch off
+        )
+        r.raise_for_status()
+        new = 0
+        for a in BeautifulSoup(r.text, "html.parser").select("a.iusc[m]"):
+            try:
+                m = json.loads(a["m"])
+            except (json.JSONDecodeError, KeyError):
+                continue
+            url = m.get("murl", "")
+            if not url.startswith(("http://", "https://")) or url in seen:
+                continue
+            seen.add(url)
+            new += 1
+            yield Candidate(url=url, source="web", page_url=m.get("purl"), title=m.get("t"), query=query)
+        # Bing repeats its last results once it runs out, so "nothing new" means the end.
+        empty = 0 if new else empty + 1
+        first += per_page
 
 
 # --------------------------------------------------------------------------

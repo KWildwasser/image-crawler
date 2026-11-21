@@ -25,6 +25,7 @@ class Source(str, Enum):
     openverse = "openverse"
     wikimedia = "wikimedia"
     pexels = "pexels"
+    web = "web"
 
 
 def _load_dotenv(path: Path = Path(".env")) -> None:
@@ -60,7 +61,7 @@ ModelOpt = Annotated[str, typer.Option(help="Hugging Face CLIP model id")]
 @app.command()
 def crawl(
     keywords: KeywordsArg,
-    source: Annotated[list[Source], typer.Option("--source", "-s", help="API source(s) to search")] = [Source.openverse, Source.wikimedia],
+    source: Annotated[list[Source], typer.Option("--source", "-s", help="Source(s) to search; 'web' is a whole-web image search (Bing, SafeSearch off)")] = [Source.web, Source.openverse, Source.wikimedia],
     url: Annotated[list[str], typer.Option("--url", "-u", help="Crawl these websites instead of the APIs (repeatable)")] = [],
     limit: Annotated[int, typer.Option("--limit", "-n", help="Stop after saving this many images per keyword per source (or in total for --url). 0 = no limit, run until Ctrl+C or the sources run out")] = 0,
     out: OutOpt = Path("output"),
@@ -100,6 +101,8 @@ def crawl(
                     gens.append(("wikimedia", c.query, sources.wikimedia(client, c.query)))
                 if Source.pexels in source:
                     gens.append(("pexels", c.query, sources.pexels(client, c.query)))
+                if Source.web in source:
+                    gens.append(("web", c.query, sources.web(client, c.query)))
             gens = [
                 sources.limit_new(sources.safe(g), limit, lambda s=src, q=q: store.saved_count(s, q))
                 for src, q, g in gens

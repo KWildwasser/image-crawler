@@ -15,15 +15,16 @@ output/
 
 ## How it works
 
-1. **Search**: each keyword is sent as a query to the image sources
-   (Openverse, Wikimedia Commons, Pexels), or a website you name is crawled.
+1. **Search**: each keyword is sent as a query to the image sources: a
+   whole-web image search (`web`, via Bing with SafeSearch off), Openverse,
+   Wikimedia Commons and Pexels. Or a website you name is crawled.
    By default the crawl runs until the sources run out or you press Ctrl+C;
    all keywords and sources take turns, so every folder fills up together.
    Website crawls are focused on the keywords: links that mention a keyword
    (in the URL, link text or title) are visited first and followed as deep as
    they go, while unrelated links are followed only a few hops (`--depth`).
-   API results are also followed to the page they came from (e.g. the Flickr
-   or museum page behind an Openverse hit), and that site gets a small crawl
+   Search results are also followed to the page they came from (any site the
+   web search finds, or e.g. the Flickr page behind an Openverse hit), and that site gets a small crawl
    focused on the same keyword (`--follow-pages`, default 10 pages). Up to 4
    such pages are crawled at a time and at most 200 pages per host per run.
    Wikimedia Commons and Pexels pages aren't followed, because their APIs
@@ -83,7 +84,7 @@ Assistant. Apple Silicon Homebrew lives in `/opt/homebrew`. To fix it:
 ## Usage
 
 ```bash
-# search the APIs until they run out of results (Ctrl+C to stop at any time)
+# search the web and the APIs until they run out of results (Ctrl+C to stop at any time)
 uv run image-crawler crawl landscape architecture people highkey
 
 # stop after saving 20 images per keyword per source (run again for 20 more)
@@ -169,6 +170,7 @@ top of this README.
 
 | Source | Key needed | Notes |
 |---|---|---|
+| `web` | no | Whole-web image search through Bing, SafeSearch off. Finds images on any site; their pages are then crawled (see `--follow`). Some sites refuse downloads from outside their own pages; those count as `failed`. On by default. |
 | `openverse` | optional | CC / public domain. Anonymous requests from datacenter IPs may get a Cloudflare challenge, so register credentials (see `.env.example`). |
 | `wikimedia` | no | Requires `CRAWLER_CONTACT` (email or URL) in the User-Agent by [policy](https://w.wiki/4wJS). |
 | `pexels` | `PEXELS_API_KEY` | Free key, high-quality photography, Pexels license. |
