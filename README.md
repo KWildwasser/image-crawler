@@ -95,6 +95,29 @@ Useful options: `--min-confidence` (default 0.30; higher is stricter and sends m
 to `_unsorted`), `--min-size` (shorter side in px, default 400), `--model`
 (e.g. `openai/clip-vit-large-patch14` for better accuracy at ~3× the cost).
 
+## Where images are saved
+
+Output folders are relative to the directory you run the command from:
+
+| Command | Default folder | Change with |
+|---|---|---|
+| `crawl` | `./output/` | `-o ~/Pictures/crawl` |
+| `sort` | `./sorted/` | `-o ~/Pictures/sorted` |
+
+`crawl` prints the full path at the end of each run. The layout is shown at the
+top of this README.
+
+- **File names** are `<source>_<content hash>.<ext>`, e.g. `pexels_3f2a9c1e7b04.jpg`.
+- **Multi-keyword images** are stored once on disk. Each extra folder gets a
+  hard link, so it takes no extra space, and deleting the image from one folder
+  doesn't remove it from the others.
+- **Deduplication:** running again with the same `-o` folder reads
+  `metadata.jsonl` and skips images that are already there.
+- **`sort` copies by default.** Your originals stay where they are; `--move`
+  deletes each original after sorting it.
+- `output/` and `sorted/` are git-ignored, so images are never committed.
+- The CLIP model is cached separately by Hugging Face in `~/.cache/huggingface/`.
+
 ## Sources
 
 | Source | Key needed | Notes |
