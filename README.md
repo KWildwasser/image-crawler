@@ -17,7 +17,7 @@ output/
 ## How it works
 
 1. **Search**: each search phrase is sent as one query to the image sources: a
-   whole-web image search (`web`, via Bing with SafeSearch off), Openverse,
+   whole-web image search (`web`, via Bing), Openverse,
    Wikimedia Commons and Pexels. Or a website you name is crawled.
    By default the crawl runs until the sources run out or you press Ctrl+C;
    all searches and sources take turns, so every folder fills up together.
@@ -180,12 +180,6 @@ a website full of thumbnails won't use up the limit.
 stays at 0 for a while, the sources return images that get filtered out (too
 small, failed downloads) or return nothing at all (`found 0`).
 
-**Mature and explicit results are included.** The crawler doesn't filter
-content. Openverse is asked to include results it marks as mature (which covers
-explicit material); add `--no-mature` to hide them. Wikimedia Commons and
-website crawls aren't filtered either. Pexels hosts no explicit content and its
-API has no setting for it.
-
 **If a run saves nothing**, read the warnings it prints. A site that refuses the
 crawler (HTTP 403, robots.txt) is reported by name. Wikipedia and Wikimedia
 Commons refuse every request without a contact address, so set
@@ -227,7 +221,7 @@ top of this README.
 
 | Source | Key needed | Notes |
 |---|---|---|
-| `web` | no | Whole-web image search through Bing, SafeSearch off. Finds images on any site; their pages are then crawled (see `--follow`). Some sites refuse downloads from outside their own pages; those count as `failed`. On by default. |
+| `web` | no | Whole-web image search through Bing. Finds images on any site; their pages are then crawled (see `--follow`). Some sites refuse downloads from outside their own pages; those count as `failed`. On by default. |
 | `openverse` | optional | CC / public domain. Anonymous requests from datacenter IPs may get a Cloudflare challenge, so register credentials (see `.env.example`). |
 | `wikimedia` | no | Requires `CRAWLER_CONTACT` (email or URL) in the User-Agent by [policy](https://w.wiki/4wJS). |
 | `pexels` | `PEXELS_API_KEY` | Free key, high-quality photography, Pexels license. |
