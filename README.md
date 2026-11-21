@@ -1,43 +1,47 @@
 # image-crawler
 
-Fetches images from the web and sorts them into folders by keyword:
-`landscape`, `architecture`, `people`, `highkey`, or any other word.
+Searches the web for images that match a description and sorts them into a
+folder per search. All words you give form **one** search:
+`green building in snow` finds green buildings in a winter scene, not
+everything green or everything snowy. Separate several searches with commas.
 
 ```
 output/
-├── landscape/      pexels_3f2a…jpg
-├── architecture/
-├── people/
+├── green-building-in-snow/   web_3f2a…jpg
+├── red-car/
 ├── highkey/        (hard links, so one image can sit in several folders)
-├── _unsorted/      matched none of the keywords confidently
+├── _unsorted/      matched none of the searches confidently
 └── metadata.jsonl  source, page URL, creator, license, scores per image
 ```
 
 ## How it works
 
-1. **Search**: each keyword is sent as a query to the image sources: a
+1. **Search**: each search phrase is sent as one query to the image sources: a
    whole-web image search (`web`, via Bing with SafeSearch off), Openverse,
    Wikimedia Commons and Pexels. Or a website you name is crawled.
    By default the crawl runs until the sources run out or you press Ctrl+C;
-   all keywords and sources take turns, so every folder fills up together.
-   Website crawls are focused on the keywords: links that mention a keyword
+   all searches and sources take turns, so every folder fills up together.
+   Website crawls are focused on the searches: links that mention words of a search
    (in the URL, link text or title) are visited first and followed as deep as
    they go, while unrelated links are followed only a few hops (`--depth`).
    Search results are also followed to the page they came from (any site the
    web search finds, or e.g. the Flickr page behind an Openverse hit), and that site gets a small crawl
-   focused on the same keyword (`--follow-pages`, default 10 pages). Up to 4
+   focused on the same search (`--follow-pages`, default 10 pages). Up to 4
    such pages are crawled at a time and at most 200 pages per host per run.
    Wikimedia Commons and Pexels pages aren't followed, because their APIs
    already cover them. Turn this off with `--no-follow`.
 2. **Download**: images are fetched in parallel, with size limits, a minimum
    resolution, and perceptual-hash deduplication across runs.
 3. **Classify**: search results are noisy, so every image is checked, not trusted:
-   - **Subject keywords** (landscape, architecture, people, …) use
+   - **Subject searches** (`green building in snow`, `landscape`, …) use
      [CLIP](https://huggingface.co/openai/clip-vit-base-patch32) zero-shot
-     classification. The keywords compete with each other and with distractor
-     prompts (screenshots, diagrams, logos …). Images below `--min-confidence`
-     go to `_unsorted/`.
-   - **Tonal keywords** (`highkey`, `lowkey`, `bw`) are measured from the
+     classification. The searches compete with each other and with distractor
+     prompts (screenshots, diagrams, logos …). A multi-word search also
+     competes with its near misses, the phrase with one word left out
+     (`building in snow`, `green in snow`, `green building`), so an image has to
+     match the whole description: a green building without snow is rejected.
+     Images below `--min-confidence` go to `_unsorted/`.
+   - **Tonal searches** (`highkey`, `lowkey`, `bw`, on their own) are measured from the
      luminance histogram and saturation, which is more reliable than asking a
      model about brightness.
 4. **File**: the image goes to the best subject folder and is hard-linked into
@@ -85,35 +89,43 @@ Assistant. Apple Silicon Homebrew lives in `/opt/homebrew`. To fix it:
 ## Usage
 
 ```bash
-# search the web and the APIs until they run out of results (Ctrl+C to stop at any time)
-uv run image-crawler crawl landscape architecture people highkey
+# one search: green buildings in a winter scene (Ctrl+C to stop at any time)
+uv run image-crawler crawl green building in snow
 
-# stop after saving 20 images per keyword per source (run again for 20 more)
-uv run image-crawler crawl landscape architecture people highkey -n 20
+# several searches in one run, separated by commas, each with its own folder
+uv run image-crawler crawl green building in snow, red car, landscape, highkey
+
+# stop after saving 20 images per search per source (run again for 20 more)
+uv run image-crawler crawl red car -n 20
 
 # choose sources and amount
-uv run image-crawler crawl landscape night -s pexels -n 50 -o ~/Pictures/crawl
+uv run image-crawler crawl landscape at night -s pexels -n 50 -o ~/Pictures/crawl
 
 # only licenses that allow commercial use (Openverse)
 uv run image-crawler crawl architecture --commercial
 
 # crawl a website (same host, obeys robots.txt, 1 s between pages),
-# going deep along keyword-related links; --max-pages caps it (default: no cap)
-uv run image-crawler crawl landscape people --url https://example.com/gallery --max-pages 300
+# going deep along links related to the searches; --max-pages caps it (default: no cap)
+uv run image-crawler crawl landscape, people --url https://example.com/gallery --max-pages 300
 
 # a quick test run: public-domain National Park Service pages, 20 images
-uv run image-crawler crawl landscape architecture --url https://www.nps.gov/yose/learn/photosmultimedia/photogallery.htm -n 20 -o /tmp/crawl-test
+uv run image-crawler crawl landscape, architecture --url https://www.nps.gov/yose/learn/photosmultimedia/photogallery.htm -n 20 -o /tmp/crawl-test
 
 # sort images you already have
-uv run image-crawler sort ~/Pictures/unsorted landscape architecture people highkey lowkey -o ~/Pictures/sorted
+uv run image-crawler sort ~/Pictures/unsorted landscape, red car, highkey -o ~/Pictures/sorted
 
-# keywords with tuned prompts (any other word works with generic prompts)
+# single keywords with tuned prompts (any other words work as a plain description)
 uv run image-crawler keywords
 ```
 
 Useful options: `--min-confidence` (default 0.30; higher is stricter and sends more
 to `_unsorted`), `--min-size` (shorter side in px, default 400), `--model`
 (e.g. `openai/clip-vit-large-patch14` for better accuracy at ~3× the cost).
+
+**Wording matters.** The search engines and the classifier read the words
+literally, and "green house" usually means a glass *greenhouse*. Say
+`green building in snow` or `green painted house in snow` for green buildings.
+Folder names are the search in lower case with hyphens (`green-building-in-snow`).
 
 **What `-n` counts:** only images that are actually saved. Images that are too
 small (icons, logos), duplicates or already in the output folder don't count, so
@@ -148,18 +160,18 @@ Output folders are relative to the directory you run the command from:
 top of this README.
 
 - **File names** are `<source>_<content hash>.<ext>`, e.g. `pexels_3f2a9c1e7b04.jpg`.
-- **Multi-keyword images** are stored once on disk. Each extra folder gets a
+- **Images in several folders** are stored once on disk. Each extra folder gets a
   hard link, so it takes no extra space, and deleting the image from one folder
   doesn't remove it from the others.
 - **Re-runs continue where the last one stopped.** With the same `-o` folder,
   `crawl` reads `metadata.jsonl`, skips images that are already saved (by URL,
   and by perceptual hash for the same picture at another URL), and keeps going
-  through later search results (until it has saved `-n` images per keyword per
+  through later search results (until it has saved `-n` images per search per
   source, if you set `-n`). It stops when a source runs out of results. Ctrl+C
   stops cleanly: everything saved so far is complete and recorded. The run summary
   shows skipped images as `already_have`. Each run still pages through the
   results it has already seen before it reaches new ones, so after many runs on
-  the same keyword, Openverse without credentials may hit its page limit and stop
+  the same search, Openverse without credentials may hit its page limit and stop
   returning new images. Register credentials (see `.env.example`) or switch
   sources.
 - **`sort` copies by default.** Your originals stay where they are; `--move`

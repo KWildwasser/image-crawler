@@ -279,7 +279,7 @@ def _largest_from_srcset(srcset: str) -> str | None:
     return best
 
 
-_GENERIC_TERMS = {"photo", "photos", "photograph", "photography", "image", "images", "picture", "pictures", "the", "and", "with", "of"}
+_GENERIC_TERMS = {"photo", "photos", "photograph", "photography", "image", "images", "picture", "pictures", "the", "and", "with", "for", "from", "into", "of", "in", "on", "at", "a", "an"}
 
 
 def keyword_terms(name: str, query: str, split_words: bool = True) -> list[str]:
@@ -299,9 +299,13 @@ def keyword_terms(name: str, query: str, split_words: bool = True) -> list[str]:
 
 
 def relevance(text: str, terms: list[str]) -> int:
-    """Number of keyword terms that occur in ``text`` (substring match, so plurals count)."""
+    """Number of keyword terms that occur in ``text``.
+
+    A term must start at a word boundary ("red" matches "red-car" but not "credit");
+    it may run on, so plurals count ("house" matches "houses").
+    """
     text = text.lower()
-    return sum(1 for t in terms if t in text)
+    return sum(1 for t in terms if re.search(r"(?<![a-z0-9])" + re.escape(t), text))
 
 
 @dataclass

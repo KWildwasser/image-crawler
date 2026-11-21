@@ -12,6 +12,7 @@ Any keyword not listed here is treated as semantic with generic prompts, so
 ``image-crawler crawl cats bridges`` works out of the box.
 """
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -21,6 +22,9 @@ class Category:
     query: str  # search string sent to image APIs
     prompts: tuple[str, ...] = field(default_factory=tuple)  # CLIP prompts (semantic only)
     tonal: bool = False
+    # CLIP prompts for "almost, but not quite" (the phrase with one word left out).
+    # They compete with ``prompts``, so an image must match the whole phrase.
+    contrasts: tuple[str, ...] = field(default_factory=tuple)
 
 
 _SEMANTIC: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -122,20 +126,64 @@ DISTRACTOR_PROMPTS: tuple[str, ...] = (
 )
 
 
+def parse_searches(words: list[str]) -> list[str]:
+    """Turn command line words into searches: all words form one search, commas separate searches.
+
+    ``["green", "house", "in", "snow,", "red", "car"]`` -> ``["green house in snow", "red car"]``
+    """
+    return [" ".join(part.split()) for part in " ".join(words).split(",") if part.strip()]
+
+
 def normalize(keyword: str) -> str:
-    k = keyword.strip().lower().replace(" ", "")
-    return _ALIASES.get(k, k)
+    """Folder name for a search: a known keyword ("high key" -> "highkey"), else a slug ("green-house-in-snow")."""
+    compact = re.sub(r"[\s_-]+", "", keyword.lower())
+    compact = _ALIASES.get(compact, compact)
+    if compact in _TONAL or compact in _SEMANTIC:
+        return compact
+    return re.sub(r"[^\w]+", "-", keyword.lower()).strip("-") or "search"
 
 
 def get_category(keyword: str) -> Category:
+    """A search phrase as a category. The whole phrase is one search query and one CLIP
+    prompt, so "green building in snow" means green buildings in a winter scene, not
+    anything green or anything snowy."""
     name = normalize(keyword)
     if name in _TONAL:
         return Category(name=name, query=_TONAL[name], tonal=True)
     if name in _SEMANTIC:
         query, prompts = _SEMANTIC[name]
         return Category(name=name, query=query, prompts=prompts)
-    raw = keyword.strip()
-    return Category(name=name, query=raw, prompts=(f"a photo of {raw}", f"a photograph showing {raw}"))
+    raw = " ".join(keyword.split())
+    return Category(
+        name=name,
+        query=raw,
+        prompts=(f"a photo of {raw}", f"a photograph showing {raw}"),
+        contrasts=tuple(f"a photo of {p}" for p in leave_one_out(raw)),
+    )
+
+
+_FILLER = {"a", "an", "the", "in", "on", "at", "of", "with", "and", "or", "by", "for", "from", "under", "over", "near", "during"}
+
+
+def leave_one_out(phrase: str) -> list[str]:
+    """The phrase with one content word dropped each time, filler words at the edges trimmed.
+
+    "green house in snow" -> ["house in snow", "green in snow", "green house"]
+    """
+    words = phrase.split()
+    content = [i for i, w in enumerate(words) if w.lower() not in _FILLER]
+    if len(content) < 2:
+        return []
+    out = []
+    for i in content:
+        rest = words[:i] + words[i + 1 :]
+        while rest and rest[0].lower() in _FILLER:
+            rest.pop(0)
+        while rest and rest[-1].lower() in _FILLER:
+            rest.pop()
+        if rest and " ".join(rest) not in out:
+            out.append(" ".join(rest))
+    return out
 
 
 def known_keywords() -> list[str]:

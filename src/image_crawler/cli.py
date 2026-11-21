@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from . import __version__, sources
-from .categories import get_category, known_keywords
+from .categories import get_category, known_keywords, parse_searches
 from .classify import DEFAULT_MODEL, Classifier
 from .pipeline import Store, run, sort_local
 
@@ -52,10 +52,25 @@ def _summary(stats) -> None:
     console.print(t)
 
 
-KeywordsArg = Annotated[list[str], typer.Argument(help="Keywords / categories, e.g. landscape architecture highkey people")]
+KeywordsArg = Annotated[
+    list[str],
+    typer.Argument(
+        help="What to search for. All words form one search, e.g. green building in snow. "
+        "Separate several searches with commas: green building in snow, red car",
+        metavar="SEARCH",
+    ),
+]
 OutOpt = Annotated[Path, typer.Option("--out", "-o", help="Output folder")]
 ConfOpt = Annotated[float, typer.Option(help="Minimum CLIP probability for a semantic category")]
 ModelOpt = Annotated[str, typer.Option(help="Hugging Face CLIP model id")]
+
+
+def _categories(words: list[str]) -> list:
+    searches = parse_searches(words)
+    if not searches:
+        raise typer.BadParameter("give at least one search, e.g. green building in snow")
+    cats = list({c.name: c for c in map(get_category, searches)}.values())  # drop repeats
+    return cats
 
 
 @app.command()
@@ -77,10 +92,10 @@ def crawl(
     workers: Annotated[int, typer.Option(help="Parallel image downloads")] = 4,
     model: ModelOpt = DEFAULT_MODEL,
 ) -> None:
-    """Search the web for each keyword, download the images and sort them into folders."""
+    """Search the web, download the images and sort them into one folder per search."""
     _load_dotenv()
-    cats = [get_category(k) for k in keywords]
-    console.print(f"Categories: {', '.join(c.name + (' (tonal)' if c.tonal else '') for c in cats)}")
+    cats = _categories(keywords)
+    console.print(f"Searches: {', '.join(repr(c.query) + ' -> ' + c.name + '/' + (' (tonal)' if c.tonal else '') for c in cats)}")
     if limit <= 0:
         console.print("No limit set: crawling until the sources run out. Press Ctrl+C to stop.")
     console.print("Loading classifier ..." if any(not c.tonal for c in cats) else "Tonal-only run, no CLIP model needed.")
@@ -135,8 +150,8 @@ def sort_cmd(
     move: Annotated[bool, typer.Option(help="Delete originals after sorting")] = False,
     model: ModelOpt = DEFAULT_MODEL,
 ) -> None:
-    """Sort images you already have on disk into keyword folders."""
-    cats = [get_category(k) for k in keywords]
+    """Sort images you already have on disk into one folder per search phrase."""
+    cats = _categories(keywords)
     classifier = Classifier(cats, model_name=model, min_confidence=min_confidence)
     _summary(sort_local(folder, Store(out), classifier, move=move))
 

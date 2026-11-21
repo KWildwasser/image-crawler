@@ -129,8 +129,14 @@ class Classifier:
 
         # One averaged text embedding per category (prompt ensembling) plus
         # distractors so off-topic images don't get forced into a category.
-        self._labels = [c.name for c in self.semantic] + [f"_distractor{i}" for i in range(len(DISTRACTOR_PROMPTS))]
-        groups = [list(c.prompts) for c in self.semantic] + [[p] for p in DISTRACTOR_PROMPTS]
+        # Multi-word searches add their near misses ("green house" for "green house
+        # in snow") as distractors, so an image has to match the whole phrase.
+        own = {p for c in self.semantic for p in c.prompts}
+        distractors = list(DISTRACTOR_PROMPTS)
+        for c in self.semantic:
+            distractors += [p for p in c.contrasts if p not in own and p not in distractors]
+        self._labels = [c.name for c in self.semantic] + [f"_distractor{i}" for i in range(len(distractors))]
+        groups = [list(c.prompts) for c in self.semantic] + [[p] for p in distractors]
         embs = []
         with torch.no_grad():
             for prompts in groups:
