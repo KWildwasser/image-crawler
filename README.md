@@ -93,6 +93,34 @@ Assistant. Apple Silicon Homebrew lives in `/opt/homebrew`. To fix it:
    with the `curl` command above and open a new terminal.
 3. `rm -rf .venv && uv sync --managed-python`
 
+## GUI
+
+Prefer clicking over typing commands? Start the browser interface:
+
+```bash
+uv run image-crawler gui
+```
+
+It opens a page in your browser where you enter searches, pick sources and
+watch the images arrive in a live gallery. It runs the same crawl as the
+`crawl` command and saves to `output/` by default (changeable in the page).
+Close the terminal window or press Ctrl+C to stop it.
+
+On a Mac, you can instead double-click **`Image Crawler.command`** in the
+project folder in Finder. If macOS blocks it the first time, right-click it,
+choose **Open** and confirm. The first start installs everything, which takes
+a few minutes.
+
+The page only listens on `127.0.0.1`, so it is not reachable from other
+computers. Options: `--port` (default 8765), `--out`, `--no-browser`.
+
+**Running it on a remote machine** (e.g. over SSH): start it with
+`--no-browser`, then forward the port from your own computer with
+`ssh -N -L 8765:127.0.0.1:8765 user@host` and open http://localhost:8765.
+
+**Updating:** `git pull` in the project folder. The next start installs any
+new dependencies.
+
 ## Usage
 
 ```bash
