@@ -30,6 +30,23 @@ def _quiet_model_loading(model_name: str) -> None:
     logging.getLogger("huggingface_hub.utils._http").setLevel(logging.ERROR)
 
 
+DEVICE_NAMES = {"mps": "Apple GPU", "cuda": "NVIDIA GPU", "cpu": "CPU"}
+
+
+def pick_device(pref: str = "auto") -> str:
+    """``auto``: the Apple GPU (Metal/MPS) if available, else an NVIDIA GPU, else the CPU."""
+    import torch
+
+    mps = getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available()
+    if pref == "auto":
+        return "mps" if mps else "cuda" if torch.cuda.is_available() else "cpu"
+    if pref == "mps" and not mps:
+        raise ValueError("--device mps: no Apple GPU available (needs an Apple Silicon Mac and a PyTorch build with MPS)")
+    if pref == "cuda" and not torch.cuda.is_available():
+        raise ValueError("--device cuda: no NVIDIA GPU available")
+    return pref
+
+
 def _model_cached(model_name: str) -> bool:
     """Whether the model is fully in the Hugging Face cache.
 
@@ -106,18 +123,22 @@ class Classifier:
         model_name: str = DEFAULT_MODEL,
         min_confidence: float = 0.30,
         tonal_threshold: float = 0.5,
+        device: str = "auto",
     ) -> None:
         self.semantic = [c for c in categories if not c.tonal]
         self.tonal = [c for c in categories if c.tonal]
         self.min_confidence = min_confidence
         self.tonal_threshold = tonal_threshold
         self._model = None
+        self.device = "none"  # no CLIP needed for tonal-only runs
         if self.semantic:
-            self._load_clip(model_name)
+            self._load_clip(model_name, device)
 
     # -- CLIP -------------------------------------------------------------
-    def _load_clip(self, model_name: str) -> None:
+    def _load_clip(self, model_name: str, device: str) -> None:
         _quiet_model_loading(model_name)
+        # Run the few operations Apple's GPU backend lacks on the CPU instead of failing.
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
         import torch
         from transformers import CLIPModel, CLIPProcessor
         from transformers.utils import logging as hf_logging
@@ -126,6 +147,26 @@ class Classifier:
         self._torch = torch
         self._model = CLIPModel.from_pretrained(model_name).eval()
         self._proc = CLIPProcessor.from_pretrained(model_name)
+
+        device = pick_device(device)
+        try:
+            self._prepare(device)
+            self._semantic_scores(Image.new("RGB", (224, 224), (128, 128, 128)))  # smoke test
+        except Exception as e:  # a GPU problem must not break the crawl
+            if device == "cpu":
+                raise
+            from rich.console import Console
+
+            Console(stderr=True).print(f"[yellow]warning:[/] GPU ({device}) failed, using the CPU: {str(e).splitlines()[0]}")
+            device = "cpu"
+            self._prepare(device)
+        self.device = device
+
+    def _prepare(self, device: str) -> None:
+        """Move the model to ``device`` and compute the text embeddings there."""
+        torch = self._torch
+        self._model.to(device)
+        self._dev = torch.device(device)
 
         # One averaged text embedding per category (prompt ensembling) plus
         # distractors so off-topic images don't get forced into a category.
@@ -144,7 +185,7 @@ class Classifier:
         embs = []
         with torch.no_grad():
             for prompts in groups:
-                tok = self._proc(text=prompts, return_tensors="pt", padding=True)
+                tok = self._proc(text=prompts, return_tensors="pt", padding=True).to(self._dev)
                 e = self._as_tensor(self._model.get_text_features(**tok))
                 e = e / e.norm(dim=-1, keepdim=True)
                 m = e.mean(dim=0)
@@ -160,10 +201,10 @@ class Classifier:
     def _semantic_scores(self, img: Image.Image) -> dict[str, float]:
         torch = self._torch
         with torch.no_grad():
-            px = self._proc(images=img.convert("RGB"), return_tensors="pt")
+            px = self._proc(images=img.convert("RGB"), return_tensors="pt").to(self._dev)
             e = self._as_tensor(self._model.get_image_features(**px))
             e = e / e.norm(dim=-1, keepdim=True)
-            probs = (self._scale * e @ self._text.T).softmax(dim=-1)[0].tolist()
+            probs = (self._scale * e @ self._text.T).softmax(dim=-1)[0].cpu().tolist()
         scores = dict(zip(self._labels, probs))
         distract = sum(v for k, v in scores.items() if k.startswith("_distractor"))
         near = max((v for k, v in scores.items() if k.startswith("_contrast")), default=0.0)

@@ -58,7 +58,12 @@ cp .env.example .env   # then fill in at least CRAWLER_CONTACT
 ```
 
 The first run downloads the CLIP model (~600 MB). Later runs load it from the
-local cache without going online, so no `HF_TOKEN` is needed. It runs on CPU.
+local cache without going online, so no `HF_TOKEN` is needed.
+
+The classifier uses the Apple GPU (Metal) on Apple Silicon Macs, an NVIDIA GPU
+if there is one, and the CPU otherwise. The run prints which one it uses
+(`Classifier runs on: Apple GPU`). Force one with `--device mps|cuda|cpu`. If
+the GPU fails, the run warns and continues on the CPU.
 
 ### macOS
 
@@ -122,7 +127,8 @@ uv run image-crawler keywords
 
 Useful options: `--min-confidence` (default 0.30; higher is stricter and sends more
 to `_unsorted`), `--min-size` (shorter side in px, default 400), `--model`
-(e.g. `openai/clip-vit-large-patch14` for better accuracy at ~3× the cost).
+(e.g. `openai/clip-vit-large-patch14` for better accuracy at ~3× the cost; on
+the Apple GPU that's affordable), `--device` (see Setup).
 
 **Wording matters.** The search engines and the classifier read the words
 literally, and "green house" usually means a glass *greenhouse*. Say

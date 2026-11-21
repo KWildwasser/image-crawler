@@ -14,7 +14,7 @@ from rich.table import Table
 
 from . import __version__, sources
 from .categories import get_category, known_keywords, parse_searches
-from .classify import DEFAULT_MODEL, Classifier
+from .classify import DEFAULT_MODEL, DEVICE_NAMES, Classifier
 from .pipeline import Store, run, sort_local
 
 app = typer.Typer(add_completion=False, help="Fetch images from the web and sort them into keyword folders.")
@@ -65,6 +65,26 @@ ConfOpt = Annotated[float, typer.Option(help="Minimum CLIP probability for a sem
 ModelOpt = Annotated[str, typer.Option(help="Hugging Face CLIP model id")]
 
 
+class Device(str, Enum):
+    auto = "auto"
+    mps = "mps"
+    cuda = "cuda"
+    cpu = "cpu"
+
+
+DeviceOpt = Annotated[Device, typer.Option(help="Where the classifier runs. auto: Apple GPU (mps) if available, else NVIDIA (cuda), else CPU")]
+
+
+def _classifier(cats, model: str, min_confidence: float, device: Device) -> Classifier:
+    try:
+        clf = Classifier(cats, model_name=model, min_confidence=min_confidence, device=device.value)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
+    if clf.device != "none":
+        console.print(f"Classifier runs on: {DEVICE_NAMES.get(clf.device, clf.device)}")
+    return clf
+
+
 def _categories(words: list[str]) -> list:
     searches = parse_searches(words)
     if not searches:
@@ -93,6 +113,7 @@ def crawl(
     follow_pages: Annotated[int, typer.Option(help="--follow: pages to crawl around each source page")] = 10,
     workers: Annotated[int, typer.Option(help="Parallel image downloads")] = 4,
     model: ModelOpt = DEFAULT_MODEL,
+    device: DeviceOpt = Device.auto,
 ) -> None:
     """Search the web, download the images and sort them into one folder per search."""
     _load_dotenv()
@@ -101,7 +122,7 @@ def crawl(
     if limit <= 0:
         console.print("No limit set: crawling until the sources run out. Press Ctrl+C to stop.")
     console.print("Loading classifier ..." if any(not c.tonal for c in cats) else "Tonal-only run, no CLIP model needed.")
-    classifier = Classifier(cats, model_name=model, min_confidence=min_confidence)
+    classifier = _classifier(cats, model, min_confidence, device)
     store = Store(out)
 
     with _client() as client:
@@ -155,10 +176,11 @@ def sort_cmd(
     min_confidence: ConfOpt = 0.30,
     move: Annotated[bool, typer.Option(help="Delete originals after sorting")] = False,
     model: ModelOpt = DEFAULT_MODEL,
+    device: DeviceOpt = Device.auto,
 ) -> None:
     """Sort images you already have on disk into one folder per search phrase."""
     cats = _categories(keywords)
-    classifier = Classifier(cats, model_name=model, min_confidence=min_confidence)
+    classifier = _classifier(cats, model, min_confidence, device)
     _summary(sort_local(folder, Store(out), classifier, move=move))
 
 
