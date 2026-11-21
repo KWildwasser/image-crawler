@@ -115,7 +115,12 @@ top of this README.
   `crawl` reads `metadata.jsonl`, skips images that are already saved (by URL,
   and by perceptual hash for the same picture at another URL), and keeps going
   through later search results until it has `-n` *new* images per keyword per
-  source. It stops early when a source runs out of results.
+  source. It stops early when a source runs out of results. The run summary
+  shows skipped images as `already_have`. Each run still pages through the
+  results it has already seen before it reaches new ones, so after many runs on
+  the same keyword, Openverse without credentials may hit its page limit and stop
+  returning new images. Register credentials (see `.env.example`) or switch
+  sources.
 - **`sort` copies by default.** Your originals stay where they are; `--move`
   deletes each original after sorting it.
 - `output/` and `sorted/` are git-ignored, so images are never committed.
