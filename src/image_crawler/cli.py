@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import os
 from enum import Enum
 from pathlib import Path
@@ -60,13 +59,13 @@ def crawl(
     keywords: KeywordsArg,
     source: Annotated[list[Source], typer.Option("--source", "-s", help="API source(s) to search")] = [Source.openverse, Source.wikimedia],
     url: Annotated[list[str], typer.Option("--url", "-u", help="Crawl these websites instead of the APIs (repeatable)")] = [],
-    limit: Annotated[int, typer.Option("--limit", "-n", help="New images per keyword per source (or total for --url); already-saved ones are skipped and don't count")] = 20,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Stop after this many new images per keyword per source (or in total for --url). 0 = no limit, run until Ctrl+C or the sources run out")] = 0,
     out: OutOpt = Path("output"),
     min_size: Annotated[int, typer.Option(help="Skip images whose shorter side is below this (px)")] = 400,
     min_confidence: ConfOpt = 0.30,
     commercial: Annotated[bool, typer.Option(help="Openverse: only licenses allowing commercial use")] = False,
-    max_pages: Annotated[int, typer.Option(help="--url: max pages to visit")] = 50,
-    depth: Annotated[int, typer.Option(help="--url: max link depth")] = 2,
+    max_pages: Annotated[int, typer.Option(help="--url: max pages to visit (0 = no limit)")] = 0,
+    depth: Annotated[int, typer.Option(help="--url: max hops along links unrelated to the keywords (keyword-related links don't count)")] = 2,
     delay: Annotated[float, typer.Option(help="--url: seconds between page requests")] = 1.0,
     workers: Annotated[int, typer.Option(help="Parallel image downloads")] = 4,
     model: ModelOpt = DEFAULT_MODEL,
@@ -75,6 +74,8 @@ def crawl(
     _load_dotenv()
     cats = [get_category(k) for k in keywords]
     console.print(f"Categories: {', '.join(c.name + (' (tonal)' if c.tonal else '') for c in cats)}")
+    if limit <= 0:
+        console.print("No limit set: crawling until the sources run out. Press Ctrl+C to stop.")
     console.print("Loading classifier ..." if any(not c.tonal for c in cats) else "Tonal-only run, no CLIP model needed.")
     classifier = Classifier(cats, model_name=model, min_confidence=min_confidence)
     store = Store(out)
@@ -82,7 +83,8 @@ def crawl(
     with _client() as client:
         seen = store.seen_url
         if url:
-            site = sources.site(client, url, max_pages=max_pages, max_depth=depth, delay=delay)
+            terms = sources.keyword_terms([c.name for c in cats], [c.query for c in cats])
+            site = sources.site(client, url, max_pages=max_pages, max_depth=depth, delay=delay, terms=terms)
             cands = sources.limit_new(sources.safe(site), limit, seen)
         else:
             gens = []
@@ -93,7 +95,7 @@ def crawl(
                     gens.append(sources.wikimedia(client, c.query))
                 if Source.pexels in source:
                     gens.append(sources.pexels(client, c.query))
-            cands = itertools.chain.from_iterable(sources.limit_new(sources.safe(g), limit, seen) for g in gens)
+            cands = sources.interleave([sources.limit_new(sources.safe(g), limit, seen) for g in gens])
         stats = run(cands, client, store, classifier, min_size=min_size, workers=workers)
 
     _summary(stats)

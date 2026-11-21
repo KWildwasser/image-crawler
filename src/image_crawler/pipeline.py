@@ -158,7 +158,8 @@ def run(
         console.print(f"[green]saved[/] {', '.join(result.labels) or UNSORTED:<24} {path.name}  [dim]{cand.title or ''}[/]"[:180])
 
     pending: dict[Future, Candidate] = {}
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
         for cand in candidates:
             if store.seen_url(cand.url):
                 stats["already_have"] += 1
@@ -171,6 +172,13 @@ def run(
                     handle(pending.pop(f), f.result())
         for f in list(pending):
             handle(pending.pop(f), f.result())
+    except KeyboardInterrupt:
+        # Ctrl+C ends an unlimited crawl. Every saved image is already complete on
+        # disk and in metadata.jsonl, so unfinished downloads are just dropped.
+        console.print("[yellow]Interrupted, stopping.[/]")
+        stats["interrupted"] = 1
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
     return stats
 
 

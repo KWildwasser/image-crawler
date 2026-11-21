@@ -17,6 +17,11 @@ output/
 
 1. **Search**: each keyword is sent as a query to the image sources
    (Openverse, Wikimedia Commons, Pexels), or a website you name is crawled.
+   By default the crawl runs until the sources run out or you press Ctrl+C;
+   all keywords and sources take turns, so every folder fills up together.
+   Website crawls are focused on the keywords: links that mention a keyword
+   (in the URL, link text or title) are visited first and followed as deep as
+   they go, while unrelated links are followed only a few hops (`--depth`).
 2. **Download**: images are fetched in parallel, with size limits, a minimum
    resolution, and perceptual-hash deduplication across runs.
 3. **Classify**: search results are noisy, so every image is checked, not trusted:
@@ -72,8 +77,11 @@ Assistant. Apple Silicon Homebrew lives in `/opt/homebrew`. To fix it:
 ## Usage
 
 ```bash
-# search the APIs, 20 new images per keyword per source (run again for 20 more)
+# search the APIs until they run out of results (Ctrl+C to stop at any time)
 uv run image-crawler crawl landscape architecture people highkey
+
+# stop after 20 new images per keyword per source (run again for 20 more)
+uv run image-crawler crawl landscape architecture people highkey -n 20
 
 # choose sources and amount
 uv run image-crawler crawl landscape night -s pexels -n 50 -o ~/Pictures/crawl
@@ -81,8 +89,9 @@ uv run image-crawler crawl landscape night -s pexels -n 50 -o ~/Pictures/crawl
 # only licenses that allow commercial use (Openverse)
 uv run image-crawler crawl architecture --commercial
 
-# crawl a website (same host, obeys robots.txt, 1 s between pages)
-uv run image-crawler crawl landscape people --url https://example.com/gallery --max-pages 30
+# crawl a website (same host, obeys robots.txt, 1 s between pages),
+# going deep along keyword-related links; --max-pages caps it (default: no cap)
+uv run image-crawler crawl landscape people --url https://example.com/gallery --max-pages 300
 
 # sort images you already have
 uv run image-crawler sort ~/Pictures/unsorted landscape architecture people highkey lowkey -o ~/Pictures/sorted
@@ -114,8 +123,9 @@ top of this README.
 - **Re-runs continue where the last one stopped.** With the same `-o` folder,
   `crawl` reads `metadata.jsonl`, skips images that are already saved (by URL,
   and by perceptual hash for the same picture at another URL), and keeps going
-  through later search results until it has `-n` *new* images per keyword per
-  source. It stops early when a source runs out of results. The run summary
+  through later search results (until it has `-n` *new* images per keyword per
+  source, if you set `-n`). It stops when a source runs out of results. Ctrl+C
+  stops cleanly: everything saved so far is complete and recorded. The run summary
   shows skipped images as `already_have`. Each run still pages through the
   results it has already seen before it reaches new ones, so after many runs on
   the same keyword, Openverse without credentials may hit its page limit and stop

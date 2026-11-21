@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import heapq
+import itertools
 import os
 import re
 import time
-from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from urllib.parse import urljoin, urldefrag, urlparse
@@ -44,12 +45,15 @@ def safe(gen: Iterator[Candidate]) -> Iterator[Candidate]:
 def limit_new(cands: Iterator[Candidate], limit: int, seen: Callable[[str], bool]) -> Iterator[Candidate]:
     """Pass candidates through until ``limit`` new ones have been yielded.
 
+    ``limit <= 0`` means no limit: everything the source produces is passed on.
+
     Already-saved URLs (``seen``) are still yielded, so the pipeline can count them,
     but they don't use up the limit. Re-running a crawl therefore continues past the
     images you already have instead of re-checking the same first results. Sources
     are lazy, so the next result page is only requested when it's needed.
     """
     if limit <= 0:
+        yield from cands
         return
     new = 0
     for cand in cands:
@@ -59,6 +63,21 @@ def limit_new(cands: Iterator[Candidate], limit: int, seen: Callable[[str], bool
             new += 1
             if new >= limit:
                 return
+
+
+def interleave(gens: list[Iterator[Candidate]]) -> Iterator[Candidate]:
+    """Round-robin over several sources until all of them are exhausted.
+
+    With no limit, chaining the sources would never get past the first one, so
+    every keyword/source pair takes turns and all folders fill up together.
+    """
+    active = list(gens)
+    while active:
+        for g in list(active):
+            try:
+                yield next(g)
+            except StopIteration:
+                active.remove(g)
 
 
 # --------------------------------------------------------------------------
@@ -219,14 +238,42 @@ def _largest_from_srcset(srcset: str) -> str | None:
     return best
 
 
+_GENERIC_TERMS = {"photo", "photos", "photograph", "photography", "image", "images", "picture", "pictures", "the", "and", "with", "of"}
+
+
+def keyword_terms(keywords: list[str], queries: list[str] = ()) -> list[str]:
+    """Lower-case terms used to judge whether a link is about the keywords."""
+    terms: set[str] = set()
+    for text in [*keywords, *queries]:
+        for w in re.split(r"[^\w]+", text.lower()):
+            if len(w) >= 3 and w not in _GENERIC_TERMS:
+                terms.add(w)
+    return sorted(terms)
+
+
+def relevance(text: str, terms: list[str]) -> int:
+    """Number of keyword terms that occur in ``text`` (substring match, so plurals count)."""
+    text = text.lower()
+    return sum(1 for t in terms if t in text)
+
+
 def site(
     client: httpx.Client,
     start_urls: list[str],
-    max_pages: int = 50,
+    max_pages: int = 0,
     max_depth: int = 2,
     delay: float = 1.0,
     user_agent: str = "*",
+    terms: list[str] = (),
 ) -> Iterator[Candidate]:
+    """Crawl the hosts of ``start_urls`` and yield every image found.
+
+    The crawl is focused on ``terms``: links whose URL, anchor text or title mention
+    a keyword are visited first, and following them does not use up ``max_depth``,
+    so the crawler keeps going deeper along keyword-related pages. Unrelated links
+    are still followed, but only up to ``max_depth`` hops from the last related page.
+    ``max_pages <= 0`` means no page limit.
+    """
     robots: dict[str, RobotFileParser] = {}
 
     def allowed(url: str) -> bool:
@@ -243,16 +290,17 @@ def site(
         return robots[base].can_fetch(user_agent, url)
 
     hosts = {urlparse(u).netloc for u in start_urls}
-    queue = deque((u, 0) for u in start_urls)
-    seen_pages: set[str] = set()
+    order = itertools.count()
+    # (-relevance, depth, insertion order, url): most relevant first, then shallowest, then FIFO.
+    queue: list[tuple[int, int, int, str]] = [(0, 0, next(order), u) for u in start_urls]
+    queued: set[str] = set(start_urls)
     seen_imgs: set[str] = set()
     pages = 0
 
-    while queue and pages < max_pages:
-        url, depth = queue.popleft()
-        if url in seen_pages or not allowed(url):
+    while queue and (max_pages <= 0 or pages < max_pages):
+        _, depth, _, url = heapq.heappop(queue)
+        if not allowed(url):
             continue
-        seen_pages.add(url)
         try:
             r = client.get(url)
         except httpx.HTTPError:
@@ -283,8 +331,14 @@ def site(
             seen_imgs.add(full)
             yield Candidate(url=full, source="site", page_url=str(r.url), title=alt)
 
-        if depth < max_depth:
-            for a in soup.find_all("a", href=True):
-                nxt = urldefrag(urljoin(str(r.url), a["href"]))[0]
-                if urlparse(nxt).netloc in hosts and nxt not in seen_pages and not _SKIP_EXT.search(nxt):
-                    queue.append((nxt, depth + 1))
+        for a in soup.find_all("a", href=True):
+            nxt = urldefrag(urljoin(str(r.url), a["href"]))[0]
+            if nxt in queued or urlparse(nxt).netloc not in hosts or _SKIP_EXT.search(nxt):
+                continue
+            score = relevance(f"{nxt} {a.get_text(' ', strip=True)} {a.get('title', '')}", terms) if terms else 0
+            # Keyword-related links don't use up depth, so the crawl goes deeper along them.
+            nxt_depth = 0 if score else depth + 1
+            if nxt_depth > max_depth:
+                continue
+            queued.add(nxt)
+            heapq.heappush(queue, (-score, nxt_depth, next(order), nxt))
