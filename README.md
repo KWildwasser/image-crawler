@@ -1,9 +1,9 @@
 # image-crawler
 
 Searches the web for images that match a description and sorts them into a
-folder per search. All words you give form **one** search:
-`green building in snow` finds green buildings in a winter scene, not
-everything green or everything snowy. Separate several searches with commas.
+folder per search. All words form **one** search (`green building in snow`
+finds green buildings in snow, not everything green or snowy); separate
+several searches with commas.
 
 ```
 output/
@@ -14,216 +14,96 @@ output/
 └── metadata.jsonl  source, page URL, creator, license, scores per image
 ```
 
-## How it works
-
-1. **Search**: each search phrase is sent as one query to the image sources: a
-   whole-web image search (`web`, via Bing), Openverse,
-   Wikimedia Commons and Pexels. Or a website you name is crawled.
-   By default the crawl runs until the sources run out or you press Ctrl+C;
-   all searches and sources take turns, so every folder fills up together.
-   Website crawls are focused on the searches: links that mention words of a search
-   (in the URL, link text or title) are visited first and followed as deep as
-   they go, while unrelated links are followed only a few hops (`--depth`).
-   Search results are also followed to the page they came from (any site the
-   web search finds, or e.g. the Flickr page behind an Openverse hit), and that site gets a small crawl
-   focused on the same search (`--follow-pages`, default 10 pages). Up to 4
-   such pages are crawled at a time and at most 200 pages per host per run.
-   Wikimedia Commons and Pexels pages aren't followed, because their APIs
-   already cover them. Turn this off with `--no-follow`.
-2. **Download**: images are fetched in parallel, with size limits, a minimum
-   resolution, and perceptual-hash deduplication across runs.
-3. **Classify**: search results are noisy, so every image is checked, not trusted:
-   - **Subject searches** (`green building in snow`, `landscape`, …) use
-     [CLIP](https://huggingface.co/openai/clip-vit-base-patch32) zero-shot
-     classification. The searches compete with each other and with distractor
-     prompts (screenshots, diagrams, logos …). A multi-word search also
-     competes with its near misses, the phrase with one word left out
-     (`building in snow`, `green in snow`, `green building`), so an image has to
-     match the whole description: a green building without snow is rejected.
-     (A near miss only has to be beaten on its own, so a real red car still
-     counts as `red car` even though it also looks like `car`.)
-     Images below `--min-confidence` go to `_unsorted/`.
-   - **Tonal searches** (`highkey`, `lowkey`, `bw`, on their own) are measured from the
-     luminance histogram and saturation, which is more reliable than asking a
-     model about brightness.
-4. **File**: the image goes to the best subject folder and is hard-linked into
-   every tonal folder it matches. The source, license, and attribution go to
-   `metadata.jsonl`.
-
 ## Setup
 
 ```bash
-uv sync
-cp .env.example .env   # then fill in at least CRAWLER_CONTACT
-```
-
-The first run downloads the CLIP model (~600 MB). Later runs load it from the
-local cache without going online, so no `HF_TOKEN` is needed.
-
-The classifier uses the Apple GPU (Metal) on Apple Silicon Macs, an NVIDIA GPU
-if there is one, and the CPU otherwise. The run prints which one it uses
-(`Classifier runs on: Apple GPU`). Force one with `--device mps|cuda|cpu`. If
-the GPU fails, the run warns and continues on the CPU.
-
-### macOS
-
-Requires Apple Silicon and macOS 14 or newer. The locked PyTorch build has
-no wheels for Intel Macs or older macOS.
-
-```bash
-# install uv (skip if you already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
+curl -LsSf https://astral.sh/uv/install.sh | sh   # if you don't have uv yet
 git clone https://github.com/KWildwasser/image-crawler.git
 cd image-crawler
-
-uv sync --managed-python   # uses uv's own Python 3.14, not Homebrew's
-cp .env.example .env       # .env is git-ignored, so fill it in on each machine
+uv sync --managed-python
+cp .env.example .env   # set at least CRAWLER_CONTACT
 ```
 
-**Error: torch "only has wheels for … `macosx_14_0_arm64`" on an Apple Silicon Mac.**
-uv picked up an Intel (`x86_64`) Python, usually from an Intel Homebrew in
-`/usr/local`, which is often carried over from an older Mac by Migration
-Assistant. Apple Silicon Homebrew lives in `/opt/homebrew`. To fix it:
+The first run downloads the CLIP model (~600 MB). The classifier uses the Apple
+GPU, an NVIDIA GPU or the CPU, whichever is available (`--device` forces one).
+Update with `git pull`.
 
-1. `uname -m` must print `arm64`. If it prints `x86_64`, your terminal runs
-   under Rosetta: quit it, then in Finder open Applications → Utilities,
-   choose Get Info on Terminal, untick **Open using Rosetta**, and reopen it.
-2. `file "$(which uv)"` must say `arm64`. If it says `x86_64`, reinstall uv
-   with the `curl` command above and open a new terminal.
-3. `rm -rf .venv && uv sync --managed-python`
+**macOS** needs Apple Silicon and macOS 14+. If uv complains that torch "only
+has wheels for `macosx_14_0_arm64`", it picked up an Intel Python: check that
+`uname -m` and `file "$(which uv)"` both say `arm64` (turn off Rosetta for
+Terminal or reinstall uv if not), then `rm -rf .venv && uv sync --managed-python`.
 
 ## GUI
-
-Prefer clicking over typing commands? Start the browser interface:
 
 ```bash
 uv run image-crawler gui
 ```
 
-It opens a page in your browser where you enter searches, pick sources and
-watch the images arrive in a live gallery. It runs the same crawl as the
-`crawl` command and saves to `output/` by default (changeable in the page).
-Close the terminal window or press Ctrl+C to stop it.
+Opens a page in your browser to enter searches, pick sources and watch images
+arrive in a live gallery. On a Mac you can double-click **`Image Crawler.command`**
+instead (first time: right-click → Open). Options: `--port` (default 8765),
+`--out`, `--no-browser`. The page only listens on `127.0.0.1`; on a remote
+machine, tunnel it with `ssh -N -L 8765:127.0.0.1:8765 user@host`.
 
-On a Mac, you can instead double-click **`Image Crawler.command`** in the
-project folder in Finder. If macOS blocks it the first time, right-click it,
-choose **Open** and confirm. The first start installs everything, which takes
-a few minutes.
-
-The page only listens on `127.0.0.1`, so it is not reachable from other
-computers. Options: `--port` (default 8765), `--out`, `--no-browser`.
-
-**Running it on a remote machine** (e.g. over SSH): start it with
-`--no-browser`, then forward the port from your own computer with
-`ssh -N -L 8765:127.0.0.1:8765 user@host` and open http://localhost:8765.
-
-**Updating:** `git pull` in the project folder. The next start installs any
-new dependencies.
-
-## Usage
+## Command line
 
 ```bash
-# one search: green buildings in a winter scene (Ctrl+C to stop at any time)
-uv run image-crawler crawl green building in snow
-
-# several searches in one run, separated by commas, each with its own folder
-uv run image-crawler crawl green building in snow, red car, landscape, highkey
-
-# stop after saving 20 images per search per source (run again for 20 more)
-uv run image-crawler crawl red car -n 20
-
-# choose sources and amount
-uv run image-crawler crawl landscape at night -s pexels -n 50 -o ~/Pictures/crawl
-
-# only licenses that allow commercial use (Openverse)
-uv run image-crawler crawl architecture --commercial
-
-# crawl a website (same host, obeys robots.txt, 1 s between pages),
-# going deep along links related to the searches; --max-pages caps it (default: no cap)
-uv run image-crawler crawl landscape, people --url https://example.com/gallery --max-pages 300
-
-# a quick test run: public-domain National Park Service pages, 20 images
-uv run image-crawler crawl landscape, architecture --url https://www.nps.gov/yose/learn/photosmultimedia/photogallery.htm -n 20 -o /tmp/crawl-test
-
-# sort images you already have
-uv run image-crawler sort ~/Pictures/unsorted landscape, red car, highkey -o ~/Pictures/sorted
-
-# single keywords with tuned prompts (any other words work as a plain description)
-uv run image-crawler keywords
+uv run image-crawler crawl green building in snow               # runs until Ctrl+C
+uv run image-crawler crawl green building in snow, red car, highkey
+uv run image-crawler crawl red car -n 20                        # 20 per search per source
+uv run image-crawler crawl landscape -s pexels -o ~/Pictures/crawl
+uv run image-crawler crawl landscape, people --url https://example.com/gallery
+uv run image-crawler sort ~/Pictures/unsorted landscape, red car -o ~/Pictures/sorted
+uv run image-crawler keywords                                   # keywords with tuned prompts
 ```
 
-Useful options: `--min-confidence` (default 0.30; higher is stricter and sends more
-to `_unsorted`), `--min-size` (shorter side in px, default 400), `--model`
-(e.g. `openai/clip-vit-large-patch14` for better accuracy at ~3× the cost; on
-the Apple GPU that's affordable), `--device` (see Setup).
+Useful options:
 
-**Wording matters.** The search engines and the classifier read the words
-literally, and "green house" usually means a glass *greenhouse*. Say
-`green building in snow` or `green painted house in snow` for green buildings.
-Folder names are the search in lower case with hyphens (`green-building-in-snow`).
-
-**Animated GIFs** are searched for and kept by default. The web search
-alternates photos with animated-GIF results, Wikimedia GIFs are included, and
-GIFs on crawled pages are kept. They're saved unchanged, so they stay
-animated; the classifier looks at a frame from the middle. GIFs are usually
-small, so they have their own size limit (`--min-gif-size`, default 100 px).
-They are also big files (often several MB each). `--no-gifs` turns all of this
-off. The summary counts them as `animated`.
-
-**What `-n` counts:** only images that are actually saved. Images that are too
-small (icons, logos), duplicates or already in the output folder don't count, so
-a website full of thumbnails won't use up the limit.
-
-**Progress:** while it runs, `crawl` shows a live line such as
-`found 13 · saved 2 · too small 3  downloading from www.nps.gov`. If `saved`
-stays at 0 for a while, the sources return images that get filtered out (too
-small, failed downloads) or return nothing at all (`found 0`).
-
-**If a run saves nothing**, read the warnings it prints. A site that refuses the
-crawler (HTTP 403, robots.txt) is reported by name. Wikipedia and Wikimedia
-Commons refuse every request without a contact address, so set
-`CRAWLER_CONTACT` in `.env` for them.
-
-## Where images are saved
-
-Output folders are relative to the directory you run the command from:
-
-| Command | Default folder | Change with |
+| Option | Default | |
 |---|---|---|
-| `crawl` | `./output/` | `-o ~/Pictures/crawl` |
-| `sort` | `./sorted/` | `-o ~/Pictures/sorted` |
+| `-n` | none | images to save per search per source (in total with `--url`); only saved images count |
+| `-s` | `web`, `openverse`, `wikimedia` | sources (repeatable), see below |
+| `-o` | `./output` (`./sorted` for `sort`) | output folder |
+| `--min-confidence` | 0.30 | higher is stricter, sends more to `_unsorted/` |
+| `--min-size` / `--min-gif-size` | 400 / 100 px | shorter side |
+| `--no-gifs` | | skip animated GIFs (kept animated by default) |
+| `--no-follow`, `--follow-pages` | on, 10 | crawl the pages search results came from |
+| `--url`, `--depth`, `--max-pages` | | crawl a website (same host, obeys robots.txt) |
+| `--commercial` | | Openverse: only licenses that allow commercial use |
+| `--model` | CLIP base | `openai/clip-vit-large-patch14` is more accurate, ~3× slower |
+| `--move` | | `sort` deletes originals instead of copying |
 
-`crawl` prints the full path at the end of each run. The layout is shown at the
-top of this README.
+Tips:
 
-- **File names** are `<source>_<content hash>.<ext>`, e.g. `pexels_3f2a9c1e7b04.jpg`.
-- **Images in several folders** are stored once on disk. Each extra folder gets a
-  hard link, so it takes no extra space, and deleting the image from one folder
-  doesn't remove it from the others.
-- **Re-runs continue where the last one stopped.** With the same `-o` folder,
-  `crawl` reads `metadata.jsonl`, skips images that are already saved (by URL,
-  and by perceptual hash for the same picture at another URL), and keeps going
-  through later search results (until it has saved `-n` images per search per
-  source, if you set `-n`). It stops when a source runs out of results. Ctrl+C
-  stops cleanly: everything saved so far is complete and recorded. The run summary
-  shows skipped images as `already_have`. Each run still pages through the
-  results it has already seen before it reaches new ones, so after many runs on
-  the same search, Openverse without credentials may hit its page limit and stop
-  returning new images. Register credentials (see `.env.example`) or switch
-  sources.
-- **`sort` copies by default.** Your originals stay where they are; `--move`
-  deletes each original after sorting it.
-- `output/` and `sorted/` are git-ignored, so images are never committed.
-- The CLIP model is cached separately by Hugging Face in `~/.cache/huggingface/`.
+- **Wording matters.** "green house" usually means a *greenhouse*; say
+  `green building`.
+- **Re-runs continue** where the last one stopped: images already in the output
+  folder are skipped (by URL and perceptual hash). Ctrl+C stops cleanly.
+- **If nothing is saved**, read the printed warnings. Wikimedia refuses requests
+  without `CRAWLER_CONTACT` in `.env`.
+- File names are `<source>_<hash>.<ext>`; images in several folders are hard
+  links, so they take no extra space.
 
 ## Sources
 
-| Source | Key needed | Notes |
+| Source | Key | Notes |
 |---|---|---|
-| `web` | no | Whole-web image search through Bing. Finds images on any site; their pages are then crawled (see `--follow`). Some sites refuse downloads from outside their own pages; those count as `failed`. On by default. |
-| `openverse` | optional | CC / public domain. Anonymous requests from datacenter IPs may get a Cloudflare challenge, so register credentials (see `.env.example`). |
-| `wikimedia` | no | Requires `CRAWLER_CONTACT` (email or URL) in the User-Agent by [policy](https://w.wiki/4wJS). |
-| `pexels` | `PEXELS_API_KEY` | Free key, high-quality photography, Pexels license. |
-| `--url` | n/a | Generic crawler for sites you have permission to crawl. |
-| followed pages | n/a | Saved as `followed_….jpg`, with `page_url`. On by default, `--no-follow` turns it off. |
+| `web` | no | Whole-web image search via Bing. Some sites refuse direct downloads (`failed`). |
+| `openverse` | optional | CC / public domain. Datacenter IPs may need credentials (see `.env.example`). |
+| `wikimedia` | no | Needs `CRAWLER_CONTACT` (email or URL) by [policy](https://w.wiki/4wJS). |
+| `pexels` | `PEXELS_API_KEY` | Free key, high-quality photos. |
+| `--url` | n/a | Any site you may crawl. |
+
+## How it works
+
+1. **Search** all sources (or crawl a site) with each search phrase. Searches
+   and sources take turns, so all folders fill together. Result pages are
+   followed and get a small crawl focused on the same search.
+2. **Download** in parallel, with size limits and perceptual-hash deduplication.
+3. **Classify** every image: subject searches with
+   [CLIP](https://huggingface.co/openai/clip-vit-base-patch32), competing against
+   the other searches, distractors (screenshots, logos …) and near misses (the
+   phrase with one word left out), so the whole description must match. Tonal
+   searches (`highkey`, `lowkey`, `bw`) are measured from the histogram.
+4. **File** into the best subject folder plus any matching tonal folders, with
+   source, license and attribution in `metadata.jsonl`.
