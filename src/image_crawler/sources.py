@@ -42,10 +42,16 @@ def safe(gen: Iterator[Candidate]) -> Iterator[Candidate]:
         _warn(f"source {getattr(gen, '__name__', '?')} failed: {e}".splitlines()[0])
 
 
+# Extra receivers for warnings (the GUI shows them in the page).
+warning_listeners: list[Callable[[str], None]] = []
+
+
 def _warn(msg: str) -> None:
     from rich.console import Console
 
     Console(stderr=True).print(f"[yellow]warning:[/] {msg}")
+    for listener in warning_listeners:
+        listener(msg)
 
 
 def limit_new(cands: Iterator[Candidate], limit: int, saved: Callable[[], int]) -> Iterator[Candidate]:

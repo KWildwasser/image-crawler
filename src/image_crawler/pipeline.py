@@ -146,14 +146,20 @@ def run(
     workers: int = 4,
     full: Callable[[Candidate], bool] = lambda cand: False,
     min_gif_size: int = 100,
+    stop: threading.Event | None = None,
+    stats: Counter | None = None,
+    show_progress: bool = True,
 ) -> Counter:
     """Download, classify and save ``candidates``.
 
     ``full(cand)`` says whether the candidate's ``-n`` quota is already used up.
     Several downloads run at once, so results that finish after the quota filled
     up are dropped instead of saved, which keeps ``-n`` exact.
+
+    For the GUI: setting ``stop`` ends the run like Ctrl+C, and ``stats`` (updated
+    live) lets another thread watch the progress.
     """
-    stats: Counter = Counter()
+    stats = Counter() if stats is None else stats
 
     def handle(cand: Candidate, res: tuple[bytes, Image.Image, str] | None) -> None:
         if full(cand):
@@ -204,10 +210,15 @@ def run(
         return f"{' · '.join(parts)}  [dim]{doing}[/]"
 
     status = console.status(progress("searching ..."))
-    status.start()
+    if show_progress:
+        status.start()
     try:
         for cand in candidates:
+            if stop is not None and stop.is_set():
+                stats["stopped"] = 1
+                break
             found += 1
+            stats["found"] = found
             if store.seen_url(cand.url):
                 stats["already_have"] += 1
                 status.update(progress("searching ..."))
@@ -224,6 +235,8 @@ def run(
             status.update(progress("searching ..."))
         status.update(progress("finishing downloads ..."))
         for f in list(pending):
+            if stop is not None and stop.is_set():
+                break
             handle(pending.pop(f), f.result())
     except KeyboardInterrupt:
         # Ctrl+C ends an unlimited crawl. Every saved image is already complete on

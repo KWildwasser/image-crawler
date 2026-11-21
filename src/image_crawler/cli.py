@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-import os
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
 
-import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from . import __version__, sources
-from .categories import get_category, known_keywords, parse_searches
+from . import job
+from .categories import get_category, known_keywords
 from .classify import DEFAULT_MODEL, DEVICE_NAMES, Classifier
-from .pipeline import Store, run, sort_local
+from .pipeline import Store, sort_local
 
 app = typer.Typer(add_completion=False, help="Fetch images from the web and sort them into keyword folders.")
 console = Console()
@@ -26,20 +24,6 @@ class Source(str, Enum):
     wikimedia = "wikimedia"
     pexels = "pexels"
     web = "web"
-
-
-def _load_dotenv(path: Path = Path(".env")) -> None:
-    if path.exists():
-        for line in path.read_text().splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip("\"'"))
-
-
-def _client() -> httpx.Client:
-    contact = os.environ.get("CRAWLER_CONTACT", "").strip()
-    ua = f"image-crawler/{__version__} (hobby image sorter{'; ' + contact if contact else ''}) python-httpx"
-    return httpx.Client(headers={"User-Agent": ua}, timeout=30, follow_redirects=True)
 
 
 def _summary(stats) -> None:
@@ -86,11 +70,10 @@ def _classifier(cats, model: str, min_confidence: float, device: Device) -> Clas
 
 
 def _categories(words: list[str]) -> list:
-    searches = parse_searches(words)
-    if not searches:
-        raise typer.BadParameter("give at least one search, e.g. green building in snow")
-    cats = list({c.name: c for c in map(get_category, searches)}.values())  # drop repeats
-    return cats
+    try:
+        return job.categories(words)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from None
 
 
 @app.command()
@@ -116,53 +99,20 @@ def crawl(
     device: DeviceOpt = Device.auto,
 ) -> None:
     """Search the web, download the images and sort them into one folder per search."""
-    _load_dotenv()
+    job.load_dotenv()
+    opts = job.CrawlOptions(
+        searches=keywords, sources=[s.value for s in source], urls=url, limit=limit, out=out,
+        min_size=min_size, gifs=gifs, min_gif_size=min_gif_size, min_confidence=min_confidence,
+        commercial=commercial, mature=mature, max_pages=max_pages, depth=depth, delay=delay,
+        follow=follow, follow_pages=follow_pages, workers=workers, model=model, device=device.value,
+    )
     cats = _categories(keywords)
     console.print(f"Searches: {', '.join(repr(c.query) + ' -> ' + c.name + '/' + (' (tonal)' if c.tonal else '') for c in cats)}")
     if limit <= 0:
         console.print("No limit set: crawling until the sources run out. Press Ctrl+C to stop.")
     console.print("Loading classifier ..." if any(not c.tonal for c in cats) else "Tonal-only run, no CLIP model needed.")
     classifier = _classifier(cats, model, min_confidence, device)
-    store = Store(out)
-
-    with _client() as client:
-        if url:
-            terms = sorted({t for c in cats for t in sources.keyword_terms(c.name, c.query, not c.tonal)})
-            site = sources.site(client, url, max_pages=max_pages, max_depth=depth, delay=delay, terms=terms)
-            cands = sources.limit_new(sources.safe(site), limit, store.saved_count)
-        else:
-            gens = []
-            for c in cats:
-                if Source.openverse in source:
-                    gens.append(("openverse", c.query, sources.openverse(client, c.query, commercial=commercial, mature=mature)))
-                if Source.wikimedia in source:
-                    gens.append(("wikimedia", c.query, sources.wikimedia(client, c.query, gifs=gifs)))
-                if Source.pexels in source:
-                    gens.append(("pexels", c.query, sources.pexels(client, c.query)))
-                if Source.web in source:
-                    gens.append(("web", c.query, sources.web(client, c.query, gifs=gifs)))
-            gens = [
-                sources.limit_new(sources.safe(g), limit, lambda s=src, q=q: store.saved_count(s, q))
-                for src, q, g in gens
-            ]
-            if follow:
-                by_query = {c.query: sources.keyword_terms(c.name, c.query, not c.tonal) for c in cats}
-                cands = iter(sources.FollowMixer(
-                    client, gens, lambda q: by_query.get(q, []), pages_per_source=follow_pages, delay=delay,
-                ))
-            else:
-                cands = sources.interleave(gens)
-        if limit <= 0:
-            full = lambda cand: False
-        elif url:
-            full = lambda cand: store.saved_count() >= limit
-        else:  # per keyword per source; images from followed pages have no quota
-            full = lambda cand: cand.source != "followed" and store.saved_count(cand.source, cand.query) >= limit
-        stats = run(
-            cands, client, store, classifier, min_size=min_size, workers=workers, full=full,
-            # --no-gifs: treat animations like photos, so the normal size limit applies
-            min_gif_size=min_gif_size if gifs else min_size,
-        )
+    stats = job.crawl(opts, classifier, cats)
 
     _summary(stats)
     console.print(f"Output: [bold]{out.resolve()}[/]  (attribution/licenses in metadata.jsonl)")
@@ -182,6 +132,18 @@ def sort_cmd(
     cats = _categories(keywords)
     classifier = _classifier(cats, model, min_confidence, device)
     _summary(sort_local(folder, Store(out), classifier, move=move))
+
+
+@app.command()
+def gui(
+    out: Annotated[Path, typer.Option("--out", "-o", help="Default output folder (can be changed in the page)")] = Path("output"),
+    port: Annotated[int, typer.Option(help="Port on 127.0.0.1 (the next free one is used if taken)")] = 8765,
+    browser: Annotated[bool, typer.Option(help="Open the page in the browser")] = True,
+) -> None:
+    """Open the graphical interface in your browser."""
+    from .gui import serve
+
+    serve(out, port=port, open_browser=browser)
 
 
 @app.command("keywords")
