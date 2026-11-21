@@ -6,7 +6,7 @@ import os
 import re
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from urllib.parse import urljoin, urldefrag, urlparse
 from urllib.robotparser import RobotFileParser
@@ -41,6 +41,26 @@ def safe(gen: Iterator[Candidate]) -> Iterator[Candidate]:
         Console(stderr=True).print(f"[yellow]warning:[/] source {getattr(gen, '__name__', '?')} failed: {e}".splitlines()[0])
 
 
+def limit_new(cands: Iterator[Candidate], limit: int, seen: Callable[[str], bool]) -> Iterator[Candidate]:
+    """Pass candidates through until ``limit`` new ones have been yielded.
+
+    Already-saved URLs (``seen``) are still yielded, so the pipeline can count them,
+    but they don't use up the limit. Re-running a crawl therefore continues past the
+    images you already have instead of re-checking the same first results. Sources
+    are lazy, so the next result page is only requested when it's needed.
+    """
+    if limit <= 0:
+        return
+    new = 0
+    for cand in cands:
+        is_new = not seen(cand.url)  # check before yielding: the pipeline marks it seen
+        yield cand
+        if is_new:
+            new += 1
+            if new >= limit:
+                return
+
+
 # --------------------------------------------------------------------------
 # Openverse (https://openverse.org) - CC-licensed / public domain images
 # --------------------------------------------------------------------------
@@ -64,10 +84,10 @@ def _openverse_headers(client: httpx.Client) -> dict[str, str]:
     return {"Authorization": f"Bearer {_ov_token}"}
 
 
-def openverse(client: httpx.Client, query: str, limit: int, commercial: bool = False) -> Iterator[Candidate]:
-    page, yielded = 1, 0
+def openverse(client: httpx.Client, query: str, commercial: bool = False) -> Iterator[Candidate]:
+    page = 1
     headers = _openverse_headers(client)
-    while yielded < limit:
+    while True:
         params = {"q": query, "page_size": 20, "page": page, "mature": "false"}
         if commercial:
             params["license_type"] = "commercial"
@@ -94,18 +114,15 @@ def openverse(client: httpx.Client, query: str, limit: int, commercial: bool = F
                 license_url=it.get("license_url"),
                 query=query,
             )
-            yielded += 1
-            if yielded >= limit:
-                return
         page += 1
 
 
 # --------------------------------------------------------------------------
 # Wikimedia Commons - freely licensed media
 # --------------------------------------------------------------------------
-def wikimedia(client: httpx.Client, query: str, limit: int, width: int = 1600) -> Iterator[Candidate]:
-    offset, yielded = 0, 0
-    while yielded < limit:
+def wikimedia(client: httpx.Client, query: str, width: int = 1600) -> Iterator[Candidate]:
+    offset = 0
+    while True:
         params = {
             "action": "query",
             "format": "json",
@@ -144,9 +161,6 @@ def wikimedia(client: httpx.Client, query: str, limit: int, width: int = 1600) -
                 license_url=meta.get("LicenseUrl", {}).get("value"),
                 query=query,
             )
-            yielded += 1
-            if yielded >= limit:
-                return
         cont = data.get("continue", {}).get("gsroffset")
         if cont is None:
             return
@@ -156,15 +170,15 @@ def wikimedia(client: httpx.Client, query: str, limit: int, width: int = 1600) -
 # --------------------------------------------------------------------------
 # Pexels (https://www.pexels.com/api/) - free API key, Pexels license
 # --------------------------------------------------------------------------
-def pexels(client: httpx.Client, query: str, limit: int) -> Iterator[Candidate]:
+def pexels(client: httpx.Client, query: str) -> Iterator[Candidate]:
     key = os.environ.get("PEXELS_API_KEY")
     if not key:
         raise httpx.HTTPError("PEXELS_API_KEY is not set (get a free key at https://www.pexels.com/api/)")
-    page, yielded = 1, 0
-    while yielded < limit:
+    page = 1
+    while True:
         r = client.get(
             "https://api.pexels.com/v1/search",
-            params={"query": query, "per_page": min(80, limit), "page": page},
+            params={"query": query, "per_page": 80, "page": page},
             headers={"Authorization": key},
         )
         r.raise_for_status()
@@ -182,9 +196,6 @@ def pexels(client: httpx.Client, query: str, limit: int) -> Iterator[Candidate]:
                 license_url="https://www.pexels.com/license/",
                 query=query,
             )
-            yielded += 1
-            if yielded >= limit:
-                return
         page += 1
 
 
@@ -211,7 +222,6 @@ def _largest_from_srcset(srcset: str) -> str | None:
 def site(
     client: httpx.Client,
     start_urls: list[str],
-    limit: int,
     max_pages: int = 50,
     max_depth: int = 2,
     delay: float = 1.0,
@@ -236,9 +246,9 @@ def site(
     queue = deque((u, 0) for u in start_urls)
     seen_pages: set[str] = set()
     seen_imgs: set[str] = set()
-    yielded = pages = 0
+    pages = 0
 
-    while queue and pages < max_pages and yielded < limit:
+    while queue and pages < max_pages:
         url, depth = queue.popleft()
         if url in seen_pages or not allowed(url):
             continue
@@ -272,9 +282,6 @@ def site(
                 continue
             seen_imgs.add(full)
             yield Candidate(url=full, source="site", page_url=str(r.url), title=alt)
-            yielded += 1
-            if yielded >= limit:
-                return
 
         if depth < max_depth:
             for a in soup.find_all("a", href=True):

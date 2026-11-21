@@ -72,7 +72,7 @@ Assistant. Apple Silicon Homebrew lives in `/opt/homebrew`. To fix it:
 ## Usage
 
 ```bash
-# search the APIs, 20 images per keyword per source
+# search the APIs, 20 new images per keyword per source (run again for 20 more)
 uv run image-crawler crawl landscape architecture people highkey
 
 # choose sources and amount
@@ -111,8 +111,11 @@ top of this README.
 - **Multi-keyword images** are stored once on disk. Each extra folder gets a
   hard link, so it takes no extra space, and deleting the image from one folder
   doesn't remove it from the others.
-- **Deduplication:** running again with the same `-o` folder reads
-  `metadata.jsonl` and skips images that are already there.
+- **Re-runs continue where the last one stopped.** With the same `-o` folder,
+  `crawl` reads `metadata.jsonl`, skips images that are already saved (by URL,
+  and by perceptual hash for the same picture at another URL), and keeps going
+  through later search results until it has `-n` *new* images per keyword per
+  source. It stops early when a source runs out of results.
 - **`sort` copies by default.** Your originals stay where they are; `--move`
   deletes each original after sorting it.
 - `output/` and `sorted/` are git-ignored, so images are never committed.

@@ -60,7 +60,7 @@ def crawl(
     keywords: KeywordsArg,
     source: Annotated[list[Source], typer.Option("--source", "-s", help="API source(s) to search")] = [Source.openverse, Source.wikimedia],
     url: Annotated[list[str], typer.Option("--url", "-u", help="Crawl these websites instead of the APIs (repeatable)")] = [],
-    limit: Annotated[int, typer.Option("--limit", "-n", help="Images per keyword per source (or total for --url)")] = 20,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="New images per keyword per source (or total for --url); already-saved ones are skipped and don't count")] = 20,
     out: OutOpt = Path("output"),
     min_size: Annotated[int, typer.Option(help="Skip images whose shorter side is below this (px)")] = 400,
     min_confidence: ConfOpt = 0.30,
@@ -80,18 +80,20 @@ def crawl(
     store = Store(out)
 
     with _client() as client:
+        seen = store.seen_url
         if url:
-            cands = sources.safe(sources.site(client, url, limit=limit, max_pages=max_pages, max_depth=depth, delay=delay))
+            site = sources.site(client, url, max_pages=max_pages, max_depth=depth, delay=delay)
+            cands = sources.limit_new(sources.safe(site), limit, seen)
         else:
             gens = []
             for c in cats:
                 if Source.openverse in source:
-                    gens.append(sources.openverse(client, c.query, limit, commercial=commercial))
+                    gens.append(sources.openverse(client, c.query, commercial=commercial))
                 if Source.wikimedia in source:
-                    gens.append(sources.wikimedia(client, c.query, limit))
+                    gens.append(sources.wikimedia(client, c.query))
                 if Source.pexels in source:
-                    gens.append(sources.pexels(client, c.query, limit))
-            cands = itertools.chain.from_iterable(sources.safe(g) for g in gens)
+                    gens.append(sources.pexels(client, c.query))
+            cands = itertools.chain.from_iterable(sources.limit_new(sources.safe(g), limit, seen) for g in gens)
         stats = run(cands, client, store, classifier, min_size=min_size, workers=workers)
 
     _summary(stats)
